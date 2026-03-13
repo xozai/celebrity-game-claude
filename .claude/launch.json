@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "celebrity-game (start)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start"],
+      "port": 3030
+    },
+    {
+      "name": "celebrity-game (dev)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3030
+    }
+  ]
+}

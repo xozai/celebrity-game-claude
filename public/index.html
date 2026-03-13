@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>Celebrity</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ======================== HOME ======================== -->
+<div id="screen-home" class="screen active">
+  <div class="home-inner">
+    <div class="home-logo">🎭</div>
+    <h1 class="home-title">Celebrity</h1>
+    <p class="home-sub">The party game where everyone's famous</p>
+
+    <div class="card">
+      <input type="text" id="player-name" class="input" placeholder="Your name" maxlength="20" autocomplete="off">
+
+      <button id="btn-create" class="btn btn-primary btn-block">Create Room</button>
+
+      <div class="divider">— or join existing room —</div>
+
+      <div class="join-row">
+        <input type="text" id="join-code" class="input code-input" placeholder="ABCD" maxlength="4" autocomplete="off" spellcheck="false">
+        <button id="btn-join" class="btn btn-secondary">Join</button>
+      </div>
+    </div>
+    <div id="home-error" class="error-msg hidden"></div>
+  </div>
+</div>
+
+<!-- ======================== LOBBY ======================== -->
+<div id="screen-lobby" class="screen">
+  <div class="lobby-header">
+    <span class="room-code-label">Room code:</span>
+    <span id="lobby-code" class="room-code-value">----</span>
+    <button id="btn-copy-code" class="btn-icon" title="Copy code">📋</button>
+  </div>
+
+  <h2 class="section-title">Waiting Room</h2>
+  <p id="lobby-subtitle" class="section-sub">Assign players to teams, then start</p>
+
+  <div id="lobby-players" class="player-list"></div>
+
+  <div id="lobby-actions" class="lobby-actions">
+    <button id="btn-auto-split" class="btn btn-secondary">Auto-Split Teams</button>
+    <button id="btn-start-game" class="btn btn-primary" disabled>Start Game</button>
+    <div id="lobby-error" class="error-msg hidden"></div>
+  </div>
+
+  <div id="lobby-guest-msg" class="guest-msg hidden">Waiting for host to start…</div>
+</div>
+
+<!-- ======================== SUBMITTING ======================== -->
+<div id="screen-submitting" class="screen">
+  <div id="submit-form-wrap">
+    <h2 class="section-title">Add Your Celebrities</h2>
+    <p class="section-sub">Write 3 names everyone would know — living or dead, real or fictional</p>
+
+    <div class="card">
+      <div class="slip-input-row">
+        <span class="slip-num">1</span>
+        <input type="text" id="celeb-1" class="input" placeholder="e.g. Steve Jobs" maxlength="50" autocomplete="off">
+      </div>
+      <div class="slip-input-row">
+        <span class="slip-num">2</span>
+        <input type="text" id="celeb-2" class="input" placeholder="e.g. Dolly Parton" maxlength="50" autocomplete="off">
+      </div>
+      <div class="slip-input-row">
+        <span class="slip-num">3</span>
+        <input type="text" id="celeb-3" class="input" placeholder="e.g. Sherlock Holmes" maxlength="50" autocomplete="off">
+      </div>
+      <button id="btn-submit-celebs" class="btn btn-primary btn-block">Submit My Celebrities</button>
+      <div id="submit-error" class="error-msg hidden"></div>
+    </div>
+  </div>
+
+  <div id="submit-waiting" class="card hidden">
+    <p class="waiting-label">✅ Submitted! Waiting for everyone…</p>
+    <div id="submit-status-list" class="submit-status-list"></div>
+  </div>
+</div>
+
+<!-- ======================== GAME ======================== -->
+<div id="screen-game" class="screen">
+  <div class="game-header">
+    <div class="team-score-block team-0-bg">
+      <div class="team-score-label">Team 1</div>
+      <div id="score-0" class="team-score-num">0</div>
+    </div>
+    <div class="game-center-info">
+      <div id="round-badge" class="round-badge">Round 1</div>
+      <div id="pile-display" class="pile-display">-- slips left</div>
+    </div>
+    <div class="team-score-block team-1-bg">
+      <div class="team-score-label">Team 2</div>
+      <div id="score-1" class="team-score-num">0</div>
+    </div>
+  </div>
+
+  <div id="game-main" class="game-main"></div>
+</div>
+
+<!-- ======================== OVERLAYS ======================== -->
+
+<!-- Round Intro Overlay -->
+<div id="overlay-round-intro" class="overlay">
+  <div class="overlay-box">
+    <div id="oi-round-num" class="oi-round-num">Round 1</div>
+    <div id="oi-round-name" class="oi-round-name">Say Anything</div>
+    <div id="oi-round-desc" class="oi-round-desc"></div>
+    <div id="oi-prev-scores" class="oi-prev-scores hidden"></div>
+    <button id="btn-oi-dismiss" class="btn btn-primary btn-block">Got it!</button>
+  </div>
+</div>
+
+<!-- Turn Recap Overlay -->
+<div id="overlay-turn-recap" class="overlay">
+  <div class="overlay-box">
+    <div id="tr-team-label" class="tr-team-label">Team 1</div>
+    <div id="tr-count" class="tr-count">Got 0 slips</div>
+    <div id="tr-slips" class="tr-slips"></div>
+    <div class="tr-score-row">
+      <div class="tr-score-cell">
+        <div class="tr-score-team team-0-color">Team 1</div>
+        <div id="tr-score-0" class="tr-score-val">0</div>
+      </div>
+      <div class="tr-score-cell">
+        <div class="tr-score-team team-1-color">Team 2</div>
+        <div id="tr-score-1" class="tr-score-val">0</div>
+      </div>
+    </div>
+    <button id="btn-tr-done" class="btn btn-primary btn-block">Continue</button>
+  </div>
+</div>
+
+<!-- Round End Overlay -->
+<div id="overlay-round-end" class="overlay">
+  <div class="overlay-box">
+    <div id="re-title" class="re-title">Round 1 Over!</div>
+    <div id="re-last-slips" class="re-last-slips"></div>
+    <div id="re-scores" class="re-scores"></div>
+    <button id="btn-re-next" class="btn btn-primary btn-block hidden">Start Round 2</button>
+    <p id="re-waiting" class="overlay-waiting hidden">Waiting for host to start next round…</p>
+  </div>
+</div>
+
+<!-- Game End Overlay -->
+<div id="overlay-game-end" class="overlay">
+  <div class="overlay-box">
+    <div class="game-end-trophy">🏆</div>
+    <div id="ge-winner" class="ge-winner">Team 1 Wins!</div>
+    <div id="ge-scores" class="ge-scores"></div>
+    <button id="btn-play-again" class="btn btn-secondary btn-block">Play Again</button>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
