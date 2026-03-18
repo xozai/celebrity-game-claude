@@ -159,9 +159,37 @@ function renderLobby() {
     const t0 = gs.players.filter(p => p.team === 0).length;
     const t1 = gs.players.filter(p => p.team === 1).length;
     document.getElementById('btn-start-game').disabled = !(t0 >= 1 && t1 >= 1);
+    // Celebs-per-player control (host)
+    let cpp = document.getElementById('celebs-per-player-row');
+    if (!cpp) {
+      cpp = document.createElement('div');
+      cpp.id        = 'celebs-per-player-row';
+      cpp.className = 'celebs-per-player-row';
+      cpp.innerHTML =
+        '<label class="celebs-label">Celebrities per player:</label>' +
+        '<div class="celebs-counter">' +
+          '<button class="btn-celebs" id="btn-celebs-dec">−</button>' +
+          '<span id="celebs-count">3</span>' +
+          '<button class="btn-celebs" id="btn-celebs-inc">+</button>' +
+        '</div>';
+      actions.insertBefore(cpp, actions.firstChild);
+      document.getElementById('btn-celebs-dec').addEventListener('click', () => {
+        const cur = gameState?.celebsPerPlayer ?? 3;
+        if (cur > 1) socket.emit('set_celebs_per_player', { count: cur - 1 });
+      });
+      document.getElementById('btn-celebs-inc').addEventListener('click', () => {
+        const cur = gameState?.celebsPerPlayer ?? 3;
+        if (cur < 10) socket.emit('set_celebs_per_player', { count: cur + 1 });
+      });
+    }
+    document.getElementById('celebs-count').textContent = gs.celebsPerPlayer ?? 3;
   } else {
     actions.classList.add('hidden');
+    // Celebs-per-player display (guest)
     guestMsg.classList.remove('hidden');
+    guestMsg.innerHTML =
+      `Waiting for host to start… ` +
+      `<span class="celebs-guest-note">(${gs.celebsPerPlayer ?? 3} celebrities each)</span>`;
   }
 }
 
@@ -171,6 +199,7 @@ function renderLobby() {
 function renderSubmitting() {
   const me = myPlayer();
   if (!me) return;
+  const n = gameState?.celebsPerPlayer ?? 3;
 
   if (me.submitted) {
     document.getElementById('submit-form-wrap').classList.add('hidden');
@@ -187,6 +216,37 @@ function renderSubmitting() {
   } else {
     document.getElementById('submit-form-wrap').classList.remove('hidden');
     document.getElementById('submit-waiting').classList.add('hidden');
+
+    // Rebuild the input fields to match celebsPerPlayer
+    const card = document.querySelector('#submit-form-wrap .card');
+    if (card) {
+      // Update subtitle
+      const sub = document.querySelector('#submit-form-wrap .section-sub');
+      if (sub) sub.textContent = `Write ${n} names everyone would know — living or dead, real or fictional`;
+
+      // Rebuild slip inputs
+      const btn    = document.getElementById('btn-submit-celebs');
+      const errDiv = document.getElementById('submit-error');
+      // Remove old slip rows
+      card.querySelectorAll('.slip-input-row').forEach(el => el.remove());
+      // Insert new ones before the button
+      for (let i = n; i >= 1; i--) {
+        const row = document.createElement('div');
+        row.className = 'slip-input-row';
+        row.innerHTML =
+          `<span class="slip-num">${i}</span>` +
+          `<input type="text" id="celeb-${i}" class="input" placeholder="Celebrity ${i}" maxlength="50" autocomplete="off">`;
+        card.insertBefore(row, btn);
+        // Re-attach Enter key nav
+        const inp = row.querySelector('input');
+        inp.addEventListener('keydown', e => {
+          if (e.key === 'Enter') {
+            if (i < n) document.getElementById(`celeb-${i + 1}`)?.focus();
+            else submitCelebrities();
+          }
+        });
+      }
+    }
   }
 }
 
@@ -488,9 +548,12 @@ function autoSplit() {
 }
 
 function submitCelebrities() {
-  const names = [1, 2, 3].map(i => document.getElementById(`celeb-${i}`).value.trim());
-  if (names.some(n => !n)) {
-    showError('submit-error', 'Fill in all 3 celebrity names.');
+  const n     = gameState?.celebsPerPlayer ?? 3;
+  const names = Array.from({ length: n }, (_, i) =>
+    (document.getElementById(`celeb-${i + 1}`)?.value ?? '').trim()
+  );
+  if (names.some(v => !v)) {
+    showError('submit-error', `Fill in all ${n} celebrity names.`);
     return;
   }
   hideError('submit-error');

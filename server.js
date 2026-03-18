@@ -140,6 +140,7 @@ function publicState(room) {
       t0.map(p => p.name).join(', ') || 'Team 1',
       t1.map(p => p.name).join(', ') || 'Team 2',
     ],
+    celebsPerPlayer: room.celebsPerPlayer ?? 3,
   };
 }
 
@@ -256,6 +257,7 @@ io.on('connection', (socket) => {
       playerTurnIdx: [0, 0], allSlips: [], pile: [],
       currentSlip: null, teamSlipsThisTurn: [], skipsThisTurn: 0,
       scores: { 0: { 1: 0, 2: 0, 3: 0 }, 1: { 1: 0, 2: 0, 3: 0 } },
+      celebsPerPlayer: 3,
       timer: null, pauseTimer: null, pausedPlayer: null,
       timerEnd: null, turnActive: false, lastActivity: Date.now(),
     };
@@ -355,6 +357,17 @@ io.on('connection', (socket) => {
     io.to(room.code).emit('state_update', { gameState: publicState(room) });
   });
 
+  // ── set_celebs_per_player ──────────────────────────────────────────
+  socket.on('set_celebs_per_player', async (data) => {
+    const room = await getRoom(socket.data.roomCode);
+    if (!room || room.host !== socket.id || room.phase !== 'lobby') return;
+    const count = typeof data === 'number' ? data : (data?.count ?? 3);
+    room.celebsPerPlayer = Math.min(10, Math.max(1, Math.floor(count)));
+    room.lastActivity = Date.now();
+    await saveRoom(room);
+    io.to(room.code).emit('state_update', { gameState: publicState(room) });
+  });
+
   // ── start_game ─────────────────────────────────────────────────────
   socket.on('start_game', async () => {
     const room = await getRoom(socket.data.roomCode);
@@ -377,9 +390,10 @@ io.on('connection', (socket) => {
     if (!player || player.submitted) return;
 
     const rawNames = Array.isArray(data) ? data : (data?.names ?? []);
+    const required = room.celebsPerPlayer ?? 3;
     const cleaned  = rawNames.map(n => (n || '').trim()).filter(Boolean);
-    if (cleaned.length !== 3) {
-      return socket.emit('error_msg', { msg: 'Enter all 3 celebrity names.' });
+    if (cleaned.length !== required) {
+      return socket.emit('error_msg', { msg: `Enter all ${required} celebrity names.` });
     }
 
     cleaned.forEach(n => room.allSlips.push(n));

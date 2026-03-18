@@ -224,6 +224,22 @@ body {
   flex-direction: column;
   gap: 10px;
 }
+.celebs-per-player-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+}
+.celebs-label { font-size: 0.95rem; color: var(--text); }
+.celebs-counter { display: flex; align-items: center; gap: 12px; }
+.btn-celebs {
+  width: 32px; height: 32px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--card);
+  font-size: 1.2rem; line-height: 1; cursor: pointer; color: var(--text);
+}
+.btn-celebs:hover { border-color: var(--accent); color: var(--accent); }
+#celebs-count { font-weight: 700; font-size: 1.1rem; min-width: 20px; text-align: center; }
+.celebs-guest-note { font-size: 0.85rem; color: var(--text-dim); }
 .guest-msg { color: var(--text-dim); font-size: 14px; padding: 12px; }
 
 /* ─── SUBMIT SCREEN ────────────────────────────────────────── */
