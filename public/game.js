@@ -226,11 +226,10 @@ function renderSubmitting() {
 
       // Rebuild slip inputs
       const btn    = document.getElementById('btn-submit-celebs');
-      const errDiv = document.getElementById('submit-error');
       // Remove old slip rows
       card.querySelectorAll('.slip-input-row').forEach(el => el.remove());
-      // Insert new ones before the button
-      for (let i = n; i >= 1; i--) {
+      // Insert new ones before the button (ascending so celeb-1 appears at top)
+      for (let i = 1; i <= n; i++) {
         const row = document.createElement('div');
         row.className = 'slip-input-row';
         row.innerHTML =
@@ -561,9 +560,36 @@ function submitCelebrities() {
 }
 
 // =====================================================================
+//  RECONNECTION BANNER
+// =====================================================================
+function showReconnectBanner() {
+  if (document.getElementById('reconnect-banner')) return;
+  const el = document.createElement('div');
+  el.id = 'reconnect-banner';
+  el.className = 'reconnect-banner';
+  el.innerHTML = '<span class="reconnect-spinner">↻</span> Reconnecting…';
+  document.body.appendChild(el);
+}
+
+function hideReconnectBanner() {
+  document.getElementById('reconnect-banner')?.remove();
+}
+
+// =====================================================================
 //  SOCKET EVENT HANDLERS
 // =====================================================================
-socket.on('connect', () => { myId = socket.id; });
+socket.on('connect', () => {
+  myId = socket.id;
+  hideReconnectBanner();
+  // Auto-rejoin if we were mid-game
+  if (gameState && myName) {
+    socket.emit('join_room', { roomCode: gameState.code, playerName: myName });
+  }
+});
+
+socket.on('disconnect', () => {
+  if (gameState) showReconnectBanner();
+});
 
 socket.on('room_created', ({ roomCode, gameState: gs }) => {
   gameState = gs;

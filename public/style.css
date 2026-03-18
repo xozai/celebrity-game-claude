@@ -526,6 +526,32 @@ body {
 .ge-winner-t0 { border-color: var(--team0); }
 .ge-winner-t1 { border-color: var(--team1); }
 
+/* ─── Reconnect banner ─────────────────────────────────────── */
+.reconnect-banner {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(20, 20, 40, 0.92);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 10px 20px;
+  font-size: 14px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 9999;
+  white-space: nowrap;
+}
+.reconnect-spinner {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+  font-size: 16px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
 /* ─── Responsive ───────────────────────────────────────────── */
 @media (min-width: 520px) {
   .screen { padding: 32px 24px 48px; }
