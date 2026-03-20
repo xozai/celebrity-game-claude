@@ -18,11 +18,11 @@ if (process.env.REDIS_URL) {
   }
 }
 
-const ROOM_TTL_SECS   = 86400;    // 24 h
-const PAUSE_GRACE_MS  = 30000;    // 30 s reconnect window for disconnected player
+const ROOM_TTL_SECS    = 86400;
+const PAUSE_GRACE_MS   = 30000;
 const CLEANUP_INTERVAL = 5 * 60 * 1000;
-const FINISHED_TTL_MS  = 60 * 60 * 1000;   // 1 h
-const IDLE_TTL_MS      = 30 * 60 * 1000;   // 30 min all-disconnected
+const FINISHED_TTL_MS  = 60 * 60 * 1000;
+const IDLE_TTL_MS      = 30 * 60 * 1000;
 
 const app    = express();
 const server = http.createServer(app);
@@ -30,9 +30,8 @@ const io     = new Server(server, { cors: { origin: '*' } });
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ── In-memory cache (timer handles live here; persistent state in Redis) ─
-const rooms    = {};   // code -> room (includes .timer / .pauseTimer handles)
-const ipCounts = {};   // ip   -> { count, resetAt }
+const rooms    = {};
+const ipCounts = {};
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  REDIS HELPERS
@@ -48,7 +47,6 @@ async function getRoom(code) {
     room.timer      = null;
     room.pauseTimer = null;
     rooms[code] = room;
-    // Reconstruct server-side timer if turn was still active when server last stopped
     if (room.turnActive && room.timerEnd) {
       const remaining = room.timerEnd - Date.now();
       if (remaining > 0) {
@@ -100,8 +98,9 @@ function shuffle(arr) {
   return a;
 }
 
+// Only real players (not spectators) count for teams / submissions
 function teamPlayers(room, teamIdx) {
-  return room.players.filter(p => p.team === teamIdx);
+  return room.players.filter(p => p.team === teamIdx && p.role !== 'spectator');
 }
 
 function currentPlayer(room) {
@@ -110,9 +109,6 @@ function currentPlayer(room) {
   return t[room.playerTurnIdx[room.currentTeamIdx] % t.length];
 }
 
-// publicState: shape understood by BOTH web (game.js) and iOS (GameViewModel.swift)
-// – adds `teamIdx` alias alongside `team` for iOS Player model
-// – teamSlipsCount is { "0": n, "1": n } (iOS expects [String: Int]?)
 function publicState(room) {
   const cp = currentPlayer(room);
   const t0 = teamPlayers(room, 0);
@@ -120,7 +116,6 @@ function publicState(room) {
   return {
     code:              room.code,
     host:              room.host,
-    // include teamIdx (iOS) alongside team (web) so both clients decode correctly
     players:           room.players.map(p => ({ ...p, teamIdx: p.team })),
     phase:             room.phase,
     round:             room.round,
@@ -131,21 +126,22 @@ function publicState(room) {
     timerEnd:          room.timerEnd,
     currentPlayerId:   cp?.id ?? null,
     currentPlayerName: cp?.name ?? null,
-    // submitted counts per team for SubmitView progress display
     teamSlipsCount: {
       '0': t0.filter(p => p.submitted).length,
       '1': t1.filter(p => p.submitted).length,
     },
-    teamNames: [
-      t0.map(p => p.name).join(', ') || 'Team 1',
-      t1.map(p => p.name).join(', ') || 'Team 2',
-    ],
+    // Feature 1: use stored team names instead of computed from player names
+    teamNames:       room.teamNames ?? ['Team 1', 'Team 2'],
     celebsPerPlayer: room.celebsPerPlayer ?? 3,
+    // Feature 2: variable turn duration
+    turnDuration:    room.turnDuration ?? 60,
+    // Feature 3: game history
+    history:         room.history ?? {},
   };
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  RATE LIMITING  (5 rooms / IP / hour)
+//  RATE LIMITING
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function isRateLimited(ip) {
@@ -165,16 +161,25 @@ function isRateLimited(ip) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 async function finalizeTurn(room) {
+  // Feature 3: record history BEFORE mutating turn state
+  const cp        = currentPlayer(room);
+  const slipsGotten  = [...room.teamSlipsThisTurn];
+  const skippedCount = room.skipsThisTurn ?? 0;
+  const teamIdx      = room.currentTeamIdx;
+  const round        = room.round;
+
+  if (!room.history[round]) room.history[round] = [];
+  room.history[round].push({
+    teamIdx,
+    playerName: cp?.name ?? '?',
+    slips: slipsGotten,
+  });
+
   room.turnActive   = false;
   room.timerEnd     = null;
   room.pausedPlayer = null;
   if (room.timer)      { clearTimeout(room.timer);      room.timer      = null; }
   if (room.pauseTimer) { clearTimeout(room.pauseTimer); room.pauseTimer = null; }
-
-  const slipsGotten  = [...room.teamSlipsThisTurn];
-  const skippedCount = room.skipsThisTurn ?? 0;
-  const teamIdx      = room.currentTeamIdx;
-  const round        = room.round;
 
   room.scores[teamIdx][round] += slipsGotten.length;
   room.teamSlipsThisTurn = [];
@@ -207,7 +212,6 @@ async function finalizeTurn(room) {
     }
   } else {
     await saveRoom(room);
-    // Include got/skipped/pileCount at top level for iOS TurnEndedData model
     io.to(room.code).emit('turn_ended', {
       slipsGotten, teamIdx, scores: room.scores,
       got: slipsGotten.length, skipped: skippedCount,
@@ -234,7 +238,6 @@ async function handleTurnExpiry(roomCode) {
 io.on('connection', (socket) => {
 
   // ── create_room ────────────────────────────────────────────────────
-  // Web:  { playerName }     iOS: plain string
   socket.on('create_room', async (data) => {
     const playerName = (typeof data === 'string' ? data : data?.playerName ?? '').trim();
     if (!playerName) return socket.emit('error_msg', { msg: 'Enter your name.' });
@@ -252,12 +255,18 @@ io.on('connection', (socket) => {
 
     const room = {
       code, host: socket.id,
-      players: [{ id: socket.id, name: playerName, team: null, submitted: false, connected: true }],
+      players: [{ id: socket.id, name: playerName, team: null, submitted: false, connected: true, role: 'player' }],
       phase: 'lobby', round: 0, currentTeamIdx: 0,
       playerTurnIdx: [0, 0], allSlips: [], pile: [],
       currentSlip: null, teamSlipsThisTurn: [], skipsThisTurn: 0,
       scores: { 0: { 1: 0, 2: 0, 3: 0 }, 1: { 1: 0, 2: 0, 3: 0 } },
       celebsPerPlayer: 3,
+      // Feature 1: custom team names
+      teamNames: ['Team 1', 'Team 2'],
+      // Feature 2: variable turn duration
+      turnDuration: 60,
+      // Feature 3: game history
+      history: {},
       timer: null, pauseTimer: null, pausedPlayer: null,
       timerEnd: null, turnActive: false, lastActivity: Date.now(),
     };
@@ -270,9 +279,6 @@ io.on('connection', (socket) => {
   });
 
   // ── join_room ──────────────────────────────────────────────────────
-  // Web:  single arg { roomCode, playerName }
-  // iOS:  single arg { roomCode, playerName }  (fixed in GameViewModel)
-  //       OR two args (playerName, roomCode) for backward compat
   socket.on('join_room', async (...args) => {
     let playerName, roomCode;
     if (args.length >= 2 && typeof args[0] === 'string') {
@@ -292,8 +298,8 @@ io.on('connection', (socket) => {
 
     // ── Reconnection path ──────────────────────────────────────────
     if (existing) {
-      const wasHost    = room.host === existing.id;
-      existing.id      = socket.id;
+      const wasHost      = room.host === existing.id;
+      existing.id        = socket.id;
       existing.connected = true;
       if (wasHost) room.host = socket.id;
 
@@ -312,6 +318,15 @@ io.on('connection', (socket) => {
         socket.emit('your_slip', { slip: room.currentSlip });
       }
 
+      // Feature 5: if turn is active and it's their turn (not paused), resend slip
+      if (room.phase === 'playing' && room.turnActive && room.currentSlip !== null
+          && room.pausedPlayer !== playerName) {
+        const cp = currentPlayer(room);
+        if (cp && cp.name === playerName) {
+          socket.emit('your_slip', { slip: room.currentSlip });
+        }
+      }
+
       room.lastActivity = Date.now();
       await saveRoom(room);
       socket.emit('state_update', { gameState: publicState(room) });
@@ -319,12 +334,10 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // ── New player — only allowed in lobby ─────────────────────────
-    if (room.phase !== 'lobby') {
-      return socket.emit('error_msg', { msg: 'Game already started.' });
-    }
-
-    room.players.push({ id: socket.id, name: playerName, team: null, submitted: false, connected: true });
+    // ── New player ─────────────────────────────────────────────────
+    // Feature 4: allow joining mid-game as spectator
+    const role = room.phase === 'lobby' ? 'player' : 'spectator';
+    room.players.push({ id: socket.id, name: playerName, team: null, submitted: false, connected: true, role });
     socket.join(roomCode);
     socket.data.roomCode   = roomCode;
     socket.data.playerName = playerName;
@@ -338,8 +351,6 @@ io.on('connection', (socket) => {
   });
 
   // ── set_teams ──────────────────────────────────────────────────────
-  // Web:  { assignments: { socketId: teamIdx } }
-  // iOS:  [[team0Ids], [team1Ids]]
   socket.on('set_teams', async (data) => {
     const room = await getRoom(socket.data.roomCode);
     if (!room || room.host !== socket.id || room.phase !== 'lobby') return;
@@ -357,12 +368,38 @@ io.on('connection', (socket) => {
     io.to(room.code).emit('state_update', { gameState: publicState(room) });
   });
 
+  // ── Feature 1: set_team_name ───────────────────────────────────────
+  socket.on('set_team_name', async (data) => {
+    const room = await getRoom(socket.data.roomCode);
+    if (!room || room.host !== socket.id || room.phase !== 'lobby') return;
+    const teamIdx = typeof data?.teamIdx === 'number' ? data.teamIdx : null;
+    if (teamIdx !== 0 && teamIdx !== 1) return;
+    const name = (data?.name ?? '').trim().slice(0, 20);
+    if (!name) return;
+    room.teamNames[teamIdx] = name;
+    room.lastActivity = Date.now();
+    await saveRoom(room);
+    io.to(room.code).emit('state_update', { gameState: publicState(room) });
+  });
+
   // ── set_celebs_per_player ──────────────────────────────────────────
   socket.on('set_celebs_per_player', async (data) => {
     const room = await getRoom(socket.data.roomCode);
     if (!room || room.host !== socket.id || room.phase !== 'lobby') return;
     const count = typeof data === 'number' ? data : (data?.count ?? 3);
     room.celebsPerPlayer = Math.min(10, Math.max(1, Math.floor(count)));
+    room.lastActivity = Date.now();
+    await saveRoom(room);
+    io.to(room.code).emit('state_update', { gameState: publicState(room) });
+  });
+
+  // ── Feature 2: set_turn_duration ───────────────────────────────────
+  socket.on('set_turn_duration', async (data) => {
+    const room = await getRoom(socket.data.roomCode);
+    if (!room || room.host !== socket.id || room.phase !== 'lobby') return;
+    const secs = typeof data === 'number' ? data : (data?.seconds ?? 60);
+    if (![30, 60, 90].includes(secs)) return;
+    room.turnDuration = secs;
     room.lastActivity = Date.now();
     await saveRoom(room);
     io.to(room.code).emit('state_update', { gameState: publicState(room) });
@@ -382,12 +419,12 @@ io.on('connection', (socket) => {
   });
 
   // ── submit_celebrities ─────────────────────────────────────────────
-  // Web: { names: [...] }   iOS: direct array
   socket.on('submit_celebrities', async (data) => {
     const room = await getRoom(socket.data.roomCode);
     if (!room || room.phase !== 'submitting') return;
     const player = room.players.find(p => p.id === socket.id);
-    if (!player || player.submitted) return;
+    // Feature 4: spectators cannot submit
+    if (!player || player.submitted || player.role === 'spectator') return;
 
     const rawNames = Array.isArray(data) ? data : (data?.names ?? []);
     const required = room.celebsPerPlayer ?? 3;
@@ -399,7 +436,8 @@ io.on('connection', (socket) => {
     cleaned.forEach(n => room.allSlips.push(n));
     player.submitted = true;
 
-    const allDone = room.players.every(p => p.submitted);
+    // Feature 4: only count non-spectator players for allDone
+    const allDone = room.players.filter(p => p.role !== 'spectator').every(p => p.submitted);
     room.lastActivity = Date.now();
     await saveRoom(room);
     io.to(room.code).emit('state_update', { gameState: publicState(room) });
@@ -422,15 +460,19 @@ io.on('connection', (socket) => {
   socket.on('start_turn', async () => {
     const room = await getRoom(socket.data.roomCode);
     if (!room || room.phase !== 'playing' || room.turnActive) return;
+    // Feature 4: spectators cannot start turns
+    const player = room.players.find(p => p.id === socket.id);
+    if (player?.role === 'spectator') return;
     const cp = currentPlayer(room);
     if (!cp || cp.id !== socket.id || !room.pile.length) return;
 
+    const dur = (room.turnDuration ?? 60) * 1000;
     const slip = room.pile.pop();
     room.currentSlip       = slip;
     room.turnActive        = true;
     room.teamSlipsThisTurn = [];
     room.skipsThisTurn     = 0;
-    room.timerEnd          = Date.now() + 60000;
+    room.timerEnd          = Date.now() + dur;
     room.lastActivity      = Date.now();
     await saveRoom(room);
 
@@ -441,13 +483,16 @@ io.on('connection', (socket) => {
       pileCount: room.pile.length + 1,
       gameState: publicState(room),
     });
-    room.timer = setTimeout(() => handleTurnExpiry(room.code), 60000);
+    room.timer = setTimeout(() => handleTurnExpiry(room.code), dur);
   });
 
   // ── got_it ─────────────────────────────────────────────────────────
   socket.on('got_it', async () => {
     const room = await getRoom(socket.data.roomCode);
     if (!room || !room.turnActive) return;
+    // Feature 4: spectators cannot interact with slips
+    const player = room.players.find(p => p.id === socket.id);
+    if (player?.role === 'spectator') return;
     const cp = currentPlayer(room);
     if (!cp || cp.id !== socket.id) return;
 
@@ -476,6 +521,9 @@ io.on('connection', (socket) => {
   socket.on('skip_slip', async () => {
     const room = await getRoom(socket.data.roomCode);
     if (!room || !room.turnActive) return;
+    // Feature 4: spectators cannot skip
+    const player = room.players.find(p => p.id === socket.id);
+    if (player?.role === 'spectator') return;
     const cp = currentPlayer(room);
     if (!cp || cp.id !== socket.id || room.pile.length === 0) return;
 
@@ -507,6 +555,20 @@ io.on('connection', (socket) => {
     });
   });
 
+  // ── Feature 6: transfer_host ───────────────────────────────────────
+  socket.on('transfer_host', async (data) => {
+    const room = await getRoom(socket.data.roomCode);
+    if (!room || room.host !== socket.id) return;
+    const targetId = data?.targetPlayerId;
+    const target   = room.players.find(p => p.id === targetId && p.connected);
+    if (!target) return;
+    room.host = targetId;
+    room.lastActivity = Date.now();
+    await saveRoom(room);
+    io.to(room.code).emit('host_changed', { newHostId: targetId, newHostName: target.name });
+    io.to(room.code).emit('state_update', { gameState: publicState(room) });
+  });
+
   // ── disconnect ─────────────────────────────────────────────────────
   socket.on('disconnect', async () => {
     const code       = socket.data.roomCode;
@@ -520,19 +582,21 @@ io.on('connection', (socket) => {
     const connected = room.players.filter(p => p.connected);
 
     if (!connected.length) {
-      // All gone — persist and let cleanup job remove after inactivity TTL
       room.lastActivity = Date.now();
       await saveRoom(room);
       return;
     }
 
-    // Reassign host if needed
-    if (room.host === socket.id) room.host = connected[0].id;
+    // Feature 6: emit host_changed when host is auto-reassigned
+    if (room.host === socket.id) {
+      room.host = connected[0].id;
+      const newHost = connected[0];
+      io.to(code).emit('host_changed', { newHostId: newHost.id, newHostName: newHost.name });
+    }
 
     const wasCurrentPlayer = currentPlayer(room)?.name === playerName;
 
     if (wasCurrentPlayer && room.turnActive) {
-      // Pause turn — give player 30 s to reconnect before finalizing
       room.pausedPlayer = playerName;
       if (room.timer) { clearTimeout(room.timer); room.timer = null; }
 
@@ -551,12 +615,11 @@ io.on('connection', (socket) => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  ROOM CLEANUP JOB  (runs every 5 minutes)
+//  ROOM CLEANUP JOB
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 setInterval(async () => {
   const now = Date.now();
-
   const shouldDelete = (room) => {
     const age     = now - (room.lastActivity ?? 0);
     const allGone = room.players.every(p => !p.connected);

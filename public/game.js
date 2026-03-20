@@ -37,12 +37,27 @@ function showError(id, msg) {
 function hideError(id) { document.getElementById(id).classList.add('hidden'); }
 
 // =====================================================================
+//  TOAST
+// =====================================================================
+function showToast(msg, duration = 3000) {
+  const old = document.getElementById('toast-msg');
+  if (old) old.remove();
+  const el = document.createElement('div');
+  el.id = 'toast-msg';
+  el.className = 'toast';
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), duration);
+}
+
+// =====================================================================
 //  HELPERS
 // =====================================================================
 function myPlayer()         { return gameState?.players.find(p => p.id === myId) ?? null; }
 function myTeamIdx()        { return myPlayer()?.team ?? null; }
 function isHost()           { return gameState?.host === myId; }
 function isCurrentPlayer()  { return gameState?.currentPlayerId === myId; }
+function isSpectator()      { return myPlayer()?.role === 'spectator'; }
 
 function teamLabel(idx) {
   return gameState?.teamNames?.[idx] ?? `Team ${idx + 1}`;
@@ -96,6 +111,35 @@ function flashCorrect() {
 }
 
 // =====================================================================
+//  HISTORY RENDER HELPER
+// =====================================================================
+function renderHistorySection(history) {
+  if (!history || Object.keys(history).length === 0) return '';
+  const rounds = Object.keys(history).map(Number).sort((a, b) => a - b);
+  const roundsHtml = rounds.map(r => {
+    const entries = history[r];
+    if (!entries || !entries.length) return '';
+    const info = ROUND_INFO[r] ?? { icon: '🎲', name: `Round ${r}` };
+    const entriesHtml = entries.map(e => {
+      const chips = e.slips.map(s => `<span class="history-chip">${escapeHtml(s)}</span>`).join('');
+      return `<div class="history-entry">
+        <div class="history-entry-player">${escapeHtml(e.playerName)} — ${escapeHtml(teamLabel(e.teamIdx))}</div>
+        <div class="history-chips">${chips}</div>
+      </div>`;
+    }).join('');
+    return `<div class="history-round">
+      <div class="history-round-label">${info.icon} Round ${r}: ${info.name}</div>
+      ${entriesHtml}
+    </div>`;
+  }).join('');
+
+  return `<details class="history-section">
+    <summary class="history-summary">Game history</summary>
+    <div class="history-body">${roundsHtml}</div>
+  </details>`;
+}
+
+// =====================================================================
 //  LOBBY RENDER
 // =====================================================================
 function renderLobby() {
@@ -120,20 +164,21 @@ function renderLobby() {
     nameWrap.className = 'player-name-wrap';
     const nameEl = document.createElement('div');
     nameEl.className = 'player-display-name';
-    nameEl.textContent = p.name;
+    nameEl.textContent = (p.id === gs.host ? '👑 ' : '') + p.name;
     nameWrap.appendChild(nameEl);
 
     const tags = document.createElement('div');
     tags.className = 'player-tags';
     if (p.id === gs.host) tags.innerHTML += '<span class="tag tag-host">Host</span>';
     if (p.id === myId)    tags.innerHTML += '<span class="tag tag-you">You</span>';
-    if (p.team === 0)      tags.innerHTML += '<span class="tag tag-t0">Team 1</span>';
-    else if (p.team === 1) tags.innerHTML += '<span class="tag tag-t1">Team 2</span>';
-    else                   tags.innerHTML += '<span class="tag tag-unassigned">Unassigned</span>';
+    if (p.role === 'spectator') tags.innerHTML += '<span class="tag tag-spectator">Spectator</span>';
+    else if (p.team === 0)      tags.innerHTML += '<span class="tag tag-t0">' + escapeHtml(teamLabel(0)) + '</span>';
+    else if (p.team === 1)      tags.innerHTML += '<span class="tag tag-t1">' + escapeHtml(teamLabel(1)) + '</span>';
+    else                        tags.innerHTML += '<span class="tag tag-unassigned">Unassigned</span>';
     nameWrap.appendChild(tags);
     row.appendChild(nameWrap);
 
-    // Team assign buttons (host only)
+    // Team assign + make host buttons (host only)
     if (isHost()) {
       const btnGroup = document.createElement('div');
       btnGroup.className = 'team-assign-btns';
@@ -144,6 +189,21 @@ function renderLobby() {
         btn.addEventListener('click', () => socket.emit('set_teams', { assignments: { [p.id]: tIdx } }));
         btnGroup.appendChild(btn);
       });
+
+      // "Make Host" button for non-host players
+      if (p.id !== gs.host) {
+        const mkHost = document.createElement('button');
+        mkHost.className = 'btn-make-host';
+        mkHost.title = 'Make host';
+        mkHost.textContent = '👑';
+        mkHost.addEventListener('click', () => {
+          if (confirm(`Make ${p.name} the host?`)) {
+            socket.emit('transfer_host', { targetPlayerId: p.id });
+          }
+        });
+        btnGroup.appendChild(mkHost);
+      }
+
       row.appendChild(btnGroup);
     }
 
@@ -159,7 +219,8 @@ function renderLobby() {
     const t0 = gs.players.filter(p => p.team === 0).length;
     const t1 = gs.players.filter(p => p.team === 1).length;
     document.getElementById('btn-start-game').disabled = !(t0 >= 1 && t1 >= 1);
-    // Celebs-per-player control (host)
+
+    // Celebs-per-player control
     let cpp = document.getElementById('celebs-per-player-row');
     if (!cpp) {
       cpp = document.createElement('div');
@@ -183,13 +244,70 @@ function renderLobby() {
       });
     }
     document.getElementById('celebs-count').textContent = gs.celebsPerPlayer ?? 3;
+
+    // Turn duration control
+    let tdRow = document.getElementById('turn-duration-row');
+    if (!tdRow) {
+      tdRow = document.createElement('div');
+      tdRow.id        = 'turn-duration-row';
+      tdRow.className = 'turn-duration-row';
+      tdRow.innerHTML =
+        '<label class="celebs-label">Turn duration:</label>' +
+        '<div class="duration-btns">' +
+          '<button class="btn-dur" data-secs="30">30s</button>' +
+          '<button class="btn-dur" data-secs="60">60s</button>' +
+          '<button class="btn-dur" data-secs="90">90s</button>' +
+        '</div>';
+      actions.insertBefore(tdRow, document.getElementById('btn-auto-split'));
+      tdRow.querySelectorAll('.btn-dur').forEach(btn => {
+        btn.addEventListener('click', () => {
+          socket.emit('set_turn_duration', { seconds: parseInt(btn.dataset.secs, 10) });
+        });
+      });
+    }
+    // Highlight active duration
+    tdRow.querySelectorAll('.btn-dur').forEach(btn => {
+      btn.classList.toggle('active', parseInt(btn.dataset.secs, 10) === (gs.turnDuration ?? 60));
+    });
+
+    // Team name inputs
+    let tnRow = document.getElementById('team-names-row');
+    if (!tnRow) {
+      tnRow = document.createElement('div');
+      tnRow.id        = 'team-names-row';
+      tnRow.className = 'team-names-row';
+      tnRow.innerHTML =
+        '<label class="celebs-label">Team names:</label>' +
+        '<div class="team-name-inputs">' +
+          '<input type="text" id="team-name-0" class="input team-name-input" maxlength="20" placeholder="Team 1">' +
+          '<input type="text" id="team-name-1" class="input team-name-input" maxlength="20" placeholder="Team 2">' +
+        '</div>';
+      actions.insertBefore(tnRow, document.getElementById('celebs-per-player-row'));
+      [0, 1].forEach(idx => {
+        const inp = document.getElementById(`team-name-${idx}`);
+        let debounce = null;
+        inp.addEventListener('input', () => {
+          clearTimeout(debounce);
+          debounce = setTimeout(() => {
+            socket.emit('set_team_name', { teamIdx: idx, name: inp.value.trim() });
+          }, 400);
+        });
+      });
+    }
+    // Sync values (don't overwrite while focused)
+    [0, 1].forEach(idx => {
+      const inp = document.getElementById(`team-name-${idx}`);
+      if (inp && document.activeElement !== inp) {
+        inp.value = gs.teamNames?.[idx] ?? `Team ${idx + 1}`;
+      }
+    });
+
   } else {
     actions.classList.add('hidden');
-    // Celebs-per-player display (guest)
     guestMsg.classList.remove('hidden');
     guestMsg.innerHTML =
       `Waiting for host to start… ` +
-      `<span class="celebs-guest-note">(${gs.celebsPerPlayer ?? 3} celebrities each)</span>`;
+      `<span class="celebs-guest-note">(${gs.celebsPerPlayer ?? 3} celebrities each, ${gs.turnDuration ?? 60}s turns)</span>`;
   }
 }
 
@@ -208,6 +326,7 @@ function renderSubmitting() {
     const statusList = document.getElementById('submit-status-list');
     statusList.innerHTML = '';
     gameState.players.forEach(p => {
+      if (p.role === 'spectator') return;
       const div = document.createElement('div');
       div.className = 'submit-status-item' + (p.submitted ? ' done' : '');
       div.innerHTML = `<span class="check">${p.submitted ? '✅' : '⏳'}</span> ${escapeHtml(p.name)}`;
@@ -217,18 +336,13 @@ function renderSubmitting() {
     document.getElementById('submit-form-wrap').classList.remove('hidden');
     document.getElementById('submit-waiting').classList.add('hidden');
 
-    // Rebuild the input fields to match celebsPerPlayer
     const card = document.querySelector('#submit-form-wrap .card');
     if (card) {
-      // Update subtitle
       const sub = document.querySelector('#submit-form-wrap .section-sub');
       if (sub) sub.textContent = `Write ${n} names everyone would know — living or dead, real or fictional`;
 
-      // Rebuild slip inputs
-      const btn    = document.getElementById('btn-submit-celebs');
-      // Remove old slip rows
+      const btn = document.getElementById('btn-submit-celebs');
       card.querySelectorAll('.slip-input-row').forEach(el => el.remove());
-      // Insert new ones before the button (ascending so celeb-1 appears at top)
       for (let i = 1; i <= n; i++) {
         const row = document.createElement('div');
         row.className = 'slip-input-row';
@@ -236,7 +350,6 @@ function renderSubmitting() {
           `<span class="slip-num">${i}</span>` +
           `<input type="text" id="celeb-${i}" class="input" placeholder="Celebrity ${i}" maxlength="50" autocomplete="off">`;
         card.insertBefore(row, btn);
-        // Re-attach Enter key nav
         const inp = row.querySelector('input');
         inp.addEventListener('keydown', e => {
           if (e.key === 'Enter') {
@@ -254,6 +367,10 @@ function renderSubmitting() {
 // =====================================================================
 function updateGameHeader() {
   const gs = gameState;
+  const t0Label = document.querySelector('#screen-game .team-score-block.team-0-bg .team-score-label');
+  const t1Label = document.querySelector('#screen-game .team-score-block.team-1-bg .team-score-label');
+  if (t0Label) t0Label.textContent = teamLabel(0);
+  if (t1Label) t1Label.textContent = teamLabel(1);
   document.getElementById('score-0').textContent    = totalScore(gs.scores, 0);
   document.getElementById('score-1').textContent    = totalScore(gs.scores, 1);
   document.getElementById('round-badge').textContent = `Round ${gs.round}`;
@@ -269,7 +386,7 @@ function renderGameMain() {
   stopTimer();
   if (!gameState.turnActive) {
     renderPreTurn();
-  } else if (isCurrentPlayer()) {
+  } else if (isCurrentPlayer() && !isSpectator()) {
     renderClueGiver();
   } else {
     renderWatching();
@@ -289,7 +406,7 @@ function renderPreTurn() {
   const gs   = gameState;
   const main = document.getElementById('game-main');
 
-  if (isCurrentPlayer()) {
+  if (isCurrentPlayer() && !isSpectator()) {
     const tIdx  = myTeamIdx() ?? 0;
     const tCls  = `team-${tIdx}`;
     main.innerHTML = `
@@ -304,8 +421,10 @@ function renderPreTurn() {
     const cp   = gs.currentPlayerName ?? '…';
     const tIdx = gs.currentTeamIdx ?? 0;
     const tCls = `team-${tIdx}`;
+    const specBadge = isSpectator() ? '<div class="spectator-badge">👁 Spectating</div>' : '';
     main.innerHTML = `
       <div class="pre-turn-view">
+        ${specBadge}
         <div class="pre-turn-up-label">Up next:</div>
         <div class="pre-turn-player">${escapeHtml(cp)}</div>
         <div class="pre-turn-team-badge ${tCls}">${teamLabel(tIdx)}</div>
@@ -344,9 +463,11 @@ function renderWatching() {
   const cp   = gs.currentPlayerName ?? '…';
   const tIdx = gs.currentTeamIdx ?? 0;
   const tCls = `team-${tIdx}`;
+  const specBadge = isSpectator() ? '<div class="spectator-badge">👁 Spectating</div>' : '';
   const main = document.getElementById('game-main');
   main.innerHTML = `
     <div class="watching-view">
+      ${specBadge}
       <div id="timer-display" class="timer-display">60</div>
       <div class="watching-player-card">
         <div class="watching-player-name">${escapeHtml(cp)}</div>
@@ -436,7 +557,6 @@ function showRoundEndOverlay(data) {
 
   const scoresEl = document.getElementById('re-scores');
   scoresEl.innerHTML = '';
-  // Round-by-round breakdown
   for (let r = 1; r <= round; r++) {
     const row = document.createElement('div');
     row.className = 're-score-row';
@@ -453,7 +573,6 @@ function showRoundEndOverlay(data) {
     row.appendChild(vals);
     scoresEl.appendChild(row);
   }
-  // Total row
   const totalRow = document.createElement('div');
   totalRow.className = 're-score-row re-score-total';
   const totalLabel = document.createElement('div');
@@ -468,6 +587,19 @@ function showRoundEndOverlay(data) {
   totalRow.appendChild(totalLabel);
   totalRow.appendChild(totalVals);
   scoresEl.appendChild(totalRow);
+
+  // History for this round
+  const histEl = document.getElementById('re-history');
+  if (histEl) {
+    const history = gameState?.history;
+    const entries = history?.[String(round)];
+    if (entries && entries.length) {
+      histEl.innerHTML = renderHistorySection({ [round]: entries });
+      histEl.classList.remove('hidden');
+    } else {
+      histEl.classList.add('hidden');
+    }
+  }
 
   const btnNext  = document.getElementById('btn-re-next');
   const waiting  = document.getElementById('re-waiting');
@@ -512,6 +644,18 @@ function showGameEndOverlay(data) {
     row.appendChild(totalEl);
     scoresEl.appendChild(row);
   });
+
+  // Full game history
+  const histEl = document.getElementById('ge-history');
+  if (histEl) {
+    const history = gameState?.history;
+    if (history && Object.keys(history).length) {
+      histEl.innerHTML = renderHistorySection(history);
+      histEl.classList.remove('hidden');
+    } else {
+      histEl.classList.add('hidden');
+    }
+  }
 
   showOverlay('overlay-game-end');
 }
@@ -581,7 +725,6 @@ function hideReconnectBanner() {
 socket.on('connect', () => {
   myId = socket.id;
   hideReconnectBanner();
-  // Auto-rejoin if we were mid-game
   if (gameState && myName) {
     socket.emit('join_room', { roomCode: gameState.code, playerName: myName });
   }
@@ -599,8 +742,18 @@ socket.on('room_created', ({ roomCode, gameState: gs }) => {
 
 socket.on('room_joined', ({ gameState: gs }) => {
   gameState = gs;
-  showScreen('screen-lobby');
-  renderLobby();
+  if (gs.phase === 'lobby') {
+    showScreen('screen-lobby');
+    renderLobby();
+  } else if (gs.phase === 'submitting') {
+    showScreen('screen-submitting');
+    renderSubmitting();
+  } else if (gs.phase === 'playing') {
+    showScreen('screen-game');
+    updateGameHeader();
+    renderGameMain();
+    if (gs.turnActive && gs.timerEnd) startClientTimer(gs.timerEnd);
+  }
 });
 
 socket.on('player_joined', ({ gameState: gs }) => {
@@ -615,9 +768,15 @@ socket.on('player_left', ({ gameState: gs }) => {
 
 socket.on('state_update', ({ gameState: gs }) => {
   gameState = gs;
-  if (gs.phase === 'lobby')       renderLobby();
-  else if (gs.phase === 'submitting') renderSubmitting();
-  else if (gs.phase === 'playing') {
+  const active = document.querySelector('.screen.active')?.id;
+  if (gs.phase === 'lobby') {
+    if (active !== 'screen-lobby') showScreen('screen-lobby');
+    renderLobby();
+  } else if (gs.phase === 'submitting') {
+    if (active !== 'screen-submitting') showScreen('screen-submitting');
+    renderSubmitting();
+  } else if (gs.phase === 'playing') {
+    if (active !== 'screen-game') showScreen('screen-game');
     updateGameHeader();
     renderGameMain();
   }
@@ -650,7 +809,6 @@ socket.on('your_slip', ({ slip }) => {
   currentSlip = slip;
   if (gameState?.phase === 'playing' && gameState.turnActive) {
     renderClueGiver();
-    // Re-attach timer display — interval already running
     const el = document.getElementById('timer-display');
     if (el && gameState.timerEnd) updateTimerDisplay(gameState.timerEnd);
   }
@@ -699,6 +857,14 @@ socket.on('error_msg', ({ msg }) => {
   if (screen.id === 'screen-home')       showError('home-error', msg);
   else if (screen.id === 'screen-lobby') showError('lobby-error', msg);
   else if (screen.id === 'screen-submitting') showError('submit-error', msg);
+});
+
+socket.on('host_changed', ({ newHostName }) => {
+  showToast(`👑 ${newHostName} is now the host`);
+  if (gameState) gameState.host = null; // will be updated by next state_update
+  // Re-render lobby if visible
+  const active = document.querySelector('.screen.active')?.id;
+  if (active === 'screen-lobby') renderLobby();
 });
 
 // =====================================================================

@@ -557,3 +557,122 @@ body {
   .screen { padding: 32px 24px 48px; }
   .game-main { padding: 24px; }
 }
+
+/* ─── Toast ────────────────────────────────────────────────── */
+.toast {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(20, 20, 40, 0.95);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 10px 22px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  z-index: 9999;
+  white-space: nowrap;
+  animation: toast-in 0.25s ease;
+}
+@keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(-8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+
+/* ─── Spectator badge ──────────────────────────────────────── */
+.spectator-badge {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 14px;
+}
+.tag-spectator { background: #555; color: #ddd; }
+
+/* ─── Lobby: team name inputs ──────────────────────────────── */
+.team-names-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 0;
+}
+.team-name-inputs { display: flex; gap: 8px; }
+.team-name-input { flex: 1; font-size: 14px; padding: 8px 12px; }
+
+/* ─── Lobby: turn duration ─────────────────────────────────── */
+.turn-duration-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+.duration-btns { display: flex; gap: 6px; }
+.btn-dur {
+  padding: 6px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-dur:hover { border-color: var(--text-dim); color: var(--text); }
+.btn-dur.active { background: var(--team0); border-color: var(--team0); color: #fff; }
+
+/* ─── Lobby: make-host button ──────────────────────────────── */
+.btn-make-host {
+  background: none;
+  border: 1.5px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 7px;
+  font-size: 14px;
+  cursor: pointer;
+  color: var(--text-dim);
+  transition: all 0.15s;
+}
+.btn-make-host:hover { border-color: #c0922a; color: #f0b944; }
+
+/* ─── History ──────────────────────────────────────────────── */
+.history-section {
+  width: 100%;
+  text-align: left;
+}
+.history-summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  padding: 8px 0;
+  list-style: none;
+  text-align: center;
+}
+.history-summary::-webkit-details-marker { display: none; }
+.history-summary::before { content: '▶ '; font-size: 10px; }
+details[open] .history-summary::before { content: '▼ '; }
+
+.history-body { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+.history-round { display: flex; flex-direction: column; gap: 6px; }
+.history-round-label {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--team0);
+}
+.history-entry { display: flex; flex-direction: column; gap: 4px; }
+.history-entry-player { font-size: 12px; color: var(--text-dim); font-weight: 600; }
+.history-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.history-chip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+/* ─── Round-end overlay: scrollable box ───────────────────── */
+.overlay-box { max-height: 90vh; overflow-y: auto; }
