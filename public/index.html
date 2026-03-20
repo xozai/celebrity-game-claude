@@ -8,6 +8,19 @@
 </head>
 <body>
 
+<!-- Apply saved theme before first paint -->
+<script>
+  (function() {
+    var t = localStorage.getItem('celebrity-theme');
+    if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
+  })();
+</script>
+
+<!-- Theme toggle (fixed, always visible) -->
+<div class="theme-toggle-wrap">
+  <button id="btn-theme" class="btn-theme" title="Toggle theme">🌐</button>
+</div>
+
 <!-- ======================== HOME ======================== -->
 <div id="screen-home" class="screen active">
   <div class="home-inner">
@@ -28,6 +41,7 @@
       </div>
     </div>
     <div id="home-error" class="error-msg hidden"></div>
+    <p id="version-label" class="version-label"></p>
   </div>
 </div>
 

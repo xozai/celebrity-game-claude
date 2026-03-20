@@ -1,11 +1,5 @@
-/* ─── Variables ────────────────────────────────────────────── */
+/* ─── Variables (shared/constant) ─────────────────────────── */
 :root {
-  --bg: #0f0f1a;
-  --surface: #1a1a2e;
-  --card: #1e1e38;
-  --border: #2e2e50;
-  --text: #e8e8f4;
-  --text-dim: #8888aa;
   --team0: #4361ee;
   --team0-light: #6382ff;
   --team1: #e63946;
@@ -15,6 +9,48 @@
   --danger: #e63946;
   --radius: 12px;
   --radius-sm: 8px;
+}
+
+/* ─── Light mode (default) ─────────────────────────────────── */
+:root {
+  --bg: #f4f4fb;
+  --surface: #eeeef7;
+  --card: #ffffff;
+  --border: #d4d4e8;
+  --text: #12121f;
+  --text-dim: #666688;
+}
+
+/* ─── Dark via system preference ───────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f0f1a;
+    --surface: #1a1a2e;
+    --card: #1e1e38;
+    --border: #2e2e50;
+    --text: #e8e8f4;
+    --text-dim: #8888aa;
+  }
+}
+
+/* ─── Dark explicit ────────────────────────────────────────── */
+[data-theme="dark"] {
+  --bg: #0f0f1a;
+  --surface: #1a1a2e;
+  --card: #1e1e38;
+  --border: #2e2e50;
+  --text: #e8e8f4;
+  --text-dim: #8888aa;
+}
+
+/* ─── Light explicit ───────────────────────────────────────── */
+[data-theme="light"] {
+  --bg: #f4f4fb;
+  --surface: #eeeef7;
+  --card: #ffffff;
+  --border: #d4d4e8;
+  --text: #12121f;
+  --text-dim: #666688;
 }
 
 /* ─── Reset ────────────────────────────────────────────────── */
@@ -676,3 +712,34 @@ details[open] .history-summary::before { content: '▼ '; }
 
 /* ─── Round-end overlay: scrollable box ───────────────────── */
 .overlay-box { max-height: 90vh; overflow-y: auto; }
+
+/* ─── Theme toggle button ──────────────────────────────────── */
+.theme-toggle-wrap {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 500;
+}
+.btn-theme {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 16px;
+  cursor: pointer;
+  color: var(--text);
+  transition: border-color 0.15s, box-shadow 0.15s;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  line-height: 1;
+}
+.btn-theme:hover { border-color: var(--text-dim); box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2); }
+
+/* ─── Version label ────────────────────────────────────────── */
+.version-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  opacity: 0.5;
+  margin-top: 8px;
+  text-align: center;
+  letter-spacing: 0.5px;
+}

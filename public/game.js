@@ -2,6 +2,8 @@
    game.js  –  client-side logic for Celebrity party game
    ===================================================================== */
 
+const APP_VERSION = '1.0.0';
+
 const socket = io();
 
 // ── Local state ──────────────────────────────────────────────────────
@@ -871,6 +873,34 @@ socket.on('host_changed', ({ newHostName }) => {
 //  BUTTON WIRING (runs after DOM ready)
 // =====================================================================
 document.addEventListener('DOMContentLoaded', () => {
+
+  // ── Version label ──────────────────────────────────────────
+  document.getElementById('version-label').textContent = `v${APP_VERSION}`;
+
+  // ── Theme toggle ───────────────────────────────────────────
+  const THEMES = ['system', 'light', 'dark'];
+  const THEME_ICONS = { system: '🌐', light: '☀️', dark: '🌙' };
+
+  function applyTheme(mode) {
+    const html = document.documentElement;
+    if (mode === 'system') {
+      delete html.dataset.theme;
+    } else {
+      html.dataset.theme = mode;
+    }
+    localStorage.setItem('celebrity-theme', mode);
+    document.getElementById('btn-theme').textContent = THEME_ICONS[mode];
+  }
+
+  // Init button icon from saved preference
+  const savedTheme = localStorage.getItem('celebrity-theme') ?? 'system';
+  document.getElementById('btn-theme').textContent = THEME_ICONS[savedTheme] ?? '🌐';
+
+  document.getElementById('btn-theme').addEventListener('click', () => {
+    const current = localStorage.getItem('celebrity-theme') ?? 'system';
+    const next = THEMES[(THEMES.indexOf(current) + 1) % THEMES.length];
+    applyTheme(next);
+  });
 
   // Home screen
   document.getElementById('btn-create').addEventListener('click', createRoom);
