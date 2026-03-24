@@ -298,9 +298,11 @@ io.on('connection', (socket) => {
 
     // ── Reconnection path ──────────────────────────────────────────
     if (existing) {
-      const wasHost      = room.host === existing.id;
+      // Restore host if this player had it before disconnecting
+      const wasHost = existing.wasHost === true || room.host === existing.id;
       existing.id        = socket.id;
       existing.connected = true;
+      existing.wasHost   = false;
       if (wasHost) room.host = socket.id;
 
       socket.join(roomCode);
@@ -577,7 +579,12 @@ io.on('connection', (socket) => {
     if (!room) return;
 
     const player = room.players.find(p => p.id === socket.id);
-    if (player) { player.connected = false; player.id = null; }
+    if (player) {
+      // Remember if this player was host so we can restore on reconnect
+      if (room.host === socket.id) player.wasHost = true;
+      player.connected = false;
+      player.id = null;
+    }
 
     const connected = room.players.filter(p => p.connected);
 
@@ -588,7 +595,7 @@ io.on('connection', (socket) => {
     }
 
     // Feature 6: emit host_changed when host is auto-reassigned
-    if (room.host === socket.id) {
+    if (player?.wasHost) {
       room.host = connected[0].id;
       const newHost = connected[0];
       io.to(code).emit('host_changed', { newHostId: newHost.id, newHostName: newHost.name });
