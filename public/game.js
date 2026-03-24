@@ -13,6 +13,41 @@ let gameState     = null;   // latest publicState from server
 let currentSlip   = null;   // only set for the active clue-giver
 let timerInterval = null;
 
+// ── Connection state ─────────────────────────────────────────────────
+let connectTimeoutId = null;
+
+function startConnectTimeout() {
+  clearConnectTimeout();
+  connectTimeoutId = setTimeout(() => {
+    showConnectWarning();
+  }, 10000); // 10 seconds
+}
+
+function clearConnectTimeout() {
+  if (connectTimeoutId) { clearTimeout(connectTimeoutId); connectTimeoutId = null; }
+}
+
+function showConnectWarning() {
+  if (document.getElementById('connect-warning')) return;
+  const el = document.createElement('div');
+  el.id = 'connect-warning';
+  el.className = 'connect-warning';
+  el.innerHTML =
+    '<span>⚠️ Server is starting up (may take ~30s)…</span>' +
+    '<button id="btn-connect-retry" class="btn-connect-retry">Retry</button>';
+  document.body.appendChild(el);
+  document.getElementById('btn-connect-retry').addEventListener('click', () => {
+    hideConnectWarning();
+    socket.connect();
+    startConnectTimeout();
+  });
+}
+
+function hideConnectWarning() {
+  document.getElementById('connect-warning')?.remove();
+  clearConnectTimeout();
+}
+
 // ── Round metadata ───────────────────────────────────────────────────
 const ROUND_INFO = {
   1: { name: 'Say Anything', icon: '💬', desc: 'Describe the celebrity using any words — except the name itself.' },
@@ -725,6 +760,7 @@ function hideReconnectBanner() {
 //  SOCKET EVENT HANDLERS
 // =====================================================================
 socket.on('connect', () => {
+  hideConnectWarning();
   myId = socket.id;
   hideReconnectBanner();
   if (gameState && myName) {
@@ -873,9 +909,11 @@ socket.on('host_changed', ({ newHostName }) => {
 //  BUTTON WIRING (runs after DOM ready)
 // =====================================================================
 document.addEventListener('DOMContentLoaded', () => {
+  startConnectTimeout();
 
   // ── Version label ──────────────────────────────────────────
-  document.getElementById('version-label').textContent = `v${APP_VERSION}`;
+  const vl = document.getElementById('version-label');
+  if (vl) vl.textContent = `v${APP_VERSION}`;
 
   // ── Theme toggle ───────────────────────────────────────────
   const THEMES = ['system', 'light', 'dark'];

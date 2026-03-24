@@ -734,6 +734,35 @@ details[open] .history-summary::before { content: '▼ '; }
 }
 .btn-theme:hover { border-color: var(--text-dim); box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2); }
 
+/* ─── Connect warning ──────────────────────────────────────── */
+.connect-warning {
+  position: fixed;
+  bottom: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(20, 20, 40, 0.95);
+  border: 1px solid #f7b731;
+  border-radius: 999px;
+  padding: 10px 20px;
+  font-size: 13px;
+  color: #f7b731;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  z-index: 9998;
+  white-space: nowrap;
+}
+.btn-connect-retry {
+  background: #f7b731;
+  color: #111;
+  border: none;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 /* ─── Version label ────────────────────────────────────────── */
 .version-label {
   font-size: 12px;
