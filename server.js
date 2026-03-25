@@ -1,6 +1,7 @@
 'use strict';
 const express = require('express');
 const http    = require('http');
+const https   = require('https');
 const { Server } = require('socket.io');
 const path    = require('path');
 
@@ -29,6 +30,57 @@ const server = http.createServer(app);
 const io     = new Server(server, { cors: { origin: '*' } });
 
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  WIKIPEDIA SUGGEST CACHE + ENDPOINT
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const suggestCache = {};
+const SUGGEST_TTL_MS  = 10 * 60 * 1000; // 10 minutes
+const SUGGEST_MAX     = 200;
+
+app.get('/api/suggest', (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (q.length < 2) return res.json({ suggestions: [] });
+
+  const key = q.toLowerCase();
+  const now = Date.now();
+  const cached = suggestCache[key];
+  if (cached && now < cached.expiresAt) {
+    return res.json({ suggestions: cached.suggestions });
+  }
+
+  const url = `https://en.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(q)}&limit=8&namespace=0&format=json&origin=*`;
+
+  const request = https.get(url, { headers: { 'User-Agent': 'CelebrityGame/1.0 (party game autocomplete; contact via github.com/xozai/celebrity-game-claude)' } }, (wikiRes) => {
+    let raw = '';
+    wikiRes.on('data', chunk => { raw += chunk; });
+    wikiRes.on('end', () => {
+      try {
+        const data = JSON.parse(raw);
+        const suggestions = (data[1] || []).slice(0, 5);
+
+        // Evict oldest entry if at capacity
+        const keys = Object.keys(suggestCache);
+        if (keys.length >= SUGGEST_MAX) {
+          let oldestKey = keys[0];
+          for (const k of keys) {
+            if (suggestCache[k].expiresAt < suggestCache[oldestKey].expiresAt) oldestKey = k;
+          }
+          delete suggestCache[oldestKey];
+        }
+
+        suggestCache[key] = { suggestions, expiresAt: now + SUGGEST_TTL_MS };
+        res.json({ suggestions });
+      } catch {
+        res.json({ suggestions: [] });
+      }
+    });
+  });
+
+  request.setTimeout(3000, () => { request.destroy(); });
+  request.on('error', () => res.json({ suggestions: [] }));
+});
 
 const rooms    = {};
 const ipCounts = {};
