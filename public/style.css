@@ -290,6 +290,35 @@ body {
   color: var(--text-dim);
 }
 .waiting-label { font-size: 16px; font-weight: 600; text-align: center; color: var(--success); }
+
+/* ─── SUGGEST DROPDOWN ─────────────────────────────────────── */
+.slip-input-row { position: relative; }
+.suggest-dropdown {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 38px; /* align with input, past the slip-num */
+  right: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,.25);
+  z-index: 100;
+  overflow: hidden;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.suggest-dropdown li {
+  padding: 9px 12px;
+  font-size: 14px;
+  cursor: pointer;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.suggest-dropdown li:not(:last-child) { border-bottom: 1px solid var(--border); }
+.suggest-dropdown li:hover, .suggest-dropdown li.active { background: var(--accent-muted, rgba(99,102,241,.15)); }
 .submit-status-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .submit-status-item {
   display: flex; align-items: center; gap: 8px;

@@ -388,12 +388,83 @@ function renderSubmitting() {
           `<input type="text" id="celeb-${i}" class="input" placeholder="Celebrity ${i}" maxlength="50" autocomplete="off">`;
         card.insertBefore(row, btn);
         const inp = row.querySelector('input');
+
+        // ── suggestion dropdown ──
+        let suggestTimer = null;
+        let activeIdx = -1;
+
+        function closeDrop() {
+          const d = row.querySelector('.suggest-dropdown');
+          if (d) d.remove();
+          activeIdx = -1;
+        }
+
+        function openDrop(suggestions) {
+          closeDrop();
+          if (!suggestions.length) return;
+          const ul = document.createElement('ul');
+          ul.className = 'suggest-dropdown';
+          suggestions.forEach((name, idx) => {
+            const li = document.createElement('li');
+            li.textContent = name;
+            li.addEventListener('mousedown', e => {
+              e.preventDefault(); // don't blur the input
+              inp.value = name;
+              closeDrop();
+              const next = document.getElementById(`celeb-${i + 1}`);
+              if (next) next.focus(); else inp.blur();
+            });
+            ul.appendChild(li);
+          });
+          row.appendChild(ul);
+        }
+
+        function setActive(idx) {
+          const items = row.querySelectorAll('.suggest-dropdown li');
+          items.forEach(li => li.classList.remove('active'));
+          if (idx >= 0 && idx < items.length) {
+            items[idx].classList.add('active');
+            activeIdx = idx;
+          } else {
+            activeIdx = -1;
+          }
+        }
+
+        inp.addEventListener('input', () => {
+          clearTimeout(suggestTimer);
+          const q = inp.value.trim();
+          if (q.length < 2) { closeDrop(); return; }
+          suggestTimer = setTimeout(async () => {
+            try {
+              const res = await fetch(`/api/suggest?q=${encodeURIComponent(q)}`);
+              const { suggestions } = await res.json();
+              openDrop(suggestions || []);
+            } catch { closeDrop(); }
+          }, 250);
+        });
+
         inp.addEventListener('keydown', e => {
+          const items = row.querySelectorAll('.suggest-dropdown li');
+          if (items.length) {
+            if (e.key === 'ArrowDown') { e.preventDefault(); setActive(Math.min(activeIdx + 1, items.length - 1)); return; }
+            if (e.key === 'ArrowUp')   { e.preventDefault(); setActive(Math.max(activeIdx - 1, 0)); return; }
+            if (e.key === 'Escape')    { closeDrop(); return; }
+            if (e.key === 'Enter' && activeIdx >= 0) {
+              e.preventDefault();
+              inp.value = items[activeIdx].textContent;
+              closeDrop();
+              const next = document.getElementById(`celeb-${i + 1}`);
+              if (next) next.focus();
+              return;
+            }
+          }
           if (e.key === 'Enter') {
             if (i < n) document.getElementById(`celeb-${i + 1}`)?.focus();
             else submitCelebrities();
           }
         });
+
+        inp.addEventListener('blur', () => { setTimeout(closeDrop, 150); });
       }
     }
   }
