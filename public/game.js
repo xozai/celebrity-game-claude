@@ -888,6 +888,22 @@ socket.on('state_update', ({ gameState: gs }) => {
     if (active !== 'screen-game') showScreen('screen-game');
     updateGameHeader();
     renderGameMain();
+    // If the round-end overlay is showing, refresh button visibility in case
+    // host status changed (e.g. host reconnected after brief disconnect)
+    const reOverlay = document.getElementById('overlay-round-end');
+    if (reOverlay?.classList.contains('active')) {
+      const btnNext = document.getElementById('btn-re-next');
+      const waiting = document.getElementById('re-waiting');
+      if (btnNext && waiting) {
+        if (isHost()) {
+          btnNext.classList.remove('hidden');
+          waiting.classList.add('hidden');
+        } else {
+          btnNext.classList.add('hidden');
+          waiting.classList.remove('hidden');
+        }
+      }
+    }
   }
 });
 

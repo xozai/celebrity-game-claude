@@ -593,7 +593,9 @@ io.on('connection', (socket) => {
   // ── start_next_round ───────────────────────────────────────────────
   socket.on('start_next_round', async () => {
     const room = await getRoom(socket.data.roomCode);
-    if (!room || room.host !== socket.id || room.turnActive) return;
+    if (!room) return;
+    if (room.host !== socket.id) return;
+    if (room.turnActive) return;
     const next = room.round + 1;
     if (next > 3) return;
     room.round             = next;
