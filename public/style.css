@@ -801,3 +801,15 @@ details[open] .history-summary::before { content: '▼ '; }
   text-align: center;
   letter-spacing: 0.5px;
 }
+
+/* ─── Round rule banner ────────────────────────────────────── */
+.round-rule-banner {
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 16px;
+  letter-spacing: 0.2px;
+}
+.round-rule-banner.rule-blue   { background: #3b82f6; color: #fff; }
+.round-rule-banner.rule-orange { background: #f97316; color: #fff; }
+.round-rule-banner.rule-purple { background: #7c3aed; color: #fff; }

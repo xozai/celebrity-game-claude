@@ -489,6 +489,7 @@ io.on('connection', (socket) => {
 
     cleaned.forEach(n => room.allSlips.push(n));
     player.submitted = true;
+    player.slips     = cleaned; // kept for retraction
 
     // Feature 4: only count non-spectator players for allDone
     const allDone = room.players.filter(p => p.role !== 'spectator').every(p => p.submitted);
@@ -508,6 +509,57 @@ io.on('connection', (socket) => {
         gameState: publicState(room),
       });
     }
+  });
+
+  // ── retract_submission ────────────────────────────────────────────
+  socket.on('retract_submission', async () => {
+    const room = await getRoom(socket.data.roomCode);
+    if (!room || room.phase !== 'submitting') return;
+    const player = room.players.find(p => p.id === socket.id);
+    if (!player || !player.submitted) return;
+
+    if (player.slips) {
+      // Remove each of this player's slips from allSlips (one occurrence each)
+      const remaining = [...room.allSlips];
+      for (const slip of player.slips) {
+        const idx = remaining.indexOf(slip);
+        if (idx !== -1) remaining.splice(idx, 1);
+      }
+      room.allSlips = remaining;
+    }
+    player.submitted = false;
+    player.slips     = null;
+    room.lastActivity = Date.now();
+    await saveRoom(room);
+    io.to(room.code).emit('state_update', { gameState: publicState(room) });
+  });
+
+  // ── reset_room ────────────────────────────────────────────────────
+  socket.on('reset_room', async () => {
+    const room = await getRoom(socket.data.roomCode);
+    if (!room || room.host !== socket.id || room.phase !== 'finished') return;
+
+    if (room.timer)      { clearTimeout(room.timer);      room.timer      = null; }
+    if (room.pauseTimer) { clearTimeout(room.pauseTimer); room.pauseTimer = null; }
+
+    room.phase             = 'lobby';
+    room.round             = 0;
+    room.allSlips          = [];
+    room.pile              = [];
+    room.currentSlip       = null;
+    room.teamSlipsThisTurn = [];
+    room.skipsThisTurn     = 0;
+    room.scores            = { 0: { 1: 0, 2: 0, 3: 0 }, 1: { 1: 0, 2: 0, 3: 0 } };
+    room.history           = {};
+    room.turnActive        = false;
+    room.timerEnd          = null;
+    room.currentTeamIdx    = 0;
+    room.playerTurnIdx     = [0, 0];
+    room.pausedPlayer      = null;
+    room.players.forEach(p => { p.submitted = false; p.slips = null; });
+    room.lastActivity      = Date.now();
+    await saveRoom(room);
+    io.to(room.code).emit('room_reset', { gameState: publicState(room) });
   });
 
   // ── start_turn ─────────────────────────────────────────────────────

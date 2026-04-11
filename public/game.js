@@ -484,6 +484,23 @@ function updateGameHeader() {
   document.getElementById('round-badge').textContent = `Round ${gs.round}`;
   const n = gs.pileCount;
   document.getElementById('pile-display').textContent = `${n} slip${n !== 1 ? 's' : ''} left`;
+
+  // Round rule banner
+  const banner = document.getElementById('round-rule-banner');
+  if (banner) {
+    const ruleMap = {
+      1: { text: '💬 Say anything — describe without saying the name', cls: 'rule-blue' },
+      2: { text: '☝️ One word only!',                                   cls: 'rule-orange' },
+      3: { text: '🎭 Act it out — no words allowed!',                  cls: 'rule-purple' },
+    };
+    const rule = ruleMap[gs.round];
+    if (rule) {
+      banner.textContent = rule.text;
+      banner.className   = `round-rule-banner ${rule.cls}`;
+    } else {
+      banner.className = 'round-rule-banner hidden';
+    }
+  }
 }
 
 // =====================================================================
@@ -1078,12 +1095,19 @@ document.addEventListener('DOMContentLoaded', () => {
     socket.emit('start_next_round');
   });
 
-  // Game end overlay
+  // Game end overlay — Play Again (host only) or Leave
   document.getElementById('btn-play-again').addEventListener('click', () => {
-    hideOverlay('overlay-game-end');
-    showScreen('screen-home');
-    gameState  = null;
-    currentSlip = null;
-    myId = socket.id;
+    socket.emit('reset_room');
   });
+});
+
+socket.on('room_reset', ({ gameState: gs }) => {
+  gameState   = gs;
+  currentSlip = null;
+  hideOverlay('overlay-game-end');
+  hideOverlay('overlay-round-end');
+  if (gs.phase === 'lobby') {
+    renderLobby();
+    showScreen('screen-lobby');
+  }
 });
