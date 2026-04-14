@@ -197,6 +197,7 @@ function publicState(room) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function isRateLimited(ip) {
+  if (process.env.TEST_MODE) return false;
   const now = Date.now();
   const e   = ipCounts[ip];
   if (!e || now > e.resetAt) {
