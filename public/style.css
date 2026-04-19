@@ -813,3 +813,36 @@ details[open] .history-summary::before { content: '▼ '; }
 .round-rule-banner.rule-blue   { background: #3b82f6; color: #fff; }
 .round-rule-banner.rule-orange { background: #f97316; color: #fff; }
 .round-rule-banner.rule-purple { background: #7c3aed; color: #fff; }
+
+/* ─── Submission countdown ─────────────────────────────────── */
+.submission-countdown {
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 16px;
+  background: var(--surface);
+  border-bottom: 2px solid var(--border);
+  color: var(--text);
+  letter-spacing: 0.2px;
+}
+.submission-countdown.urgent { color: var(--danger); }
+
+/* ─── Kick button ──────────────────────────────────────────── */
+.btn-kick {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+.btn-kick:hover { opacity: 1; background: var(--danger); }
+
+/* ─── Turn recap scorer name ───────────────────────────────── */
+.tr-scorer-name {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}

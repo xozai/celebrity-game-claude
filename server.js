@@ -96,8 +96,9 @@ async function getRoom(code) {
     const json = await redis.get(`room:${code}`);
     if (!json) return null;
     const room = JSON.parse(json);
-    room.timer      = null;
-    room.pauseTimer = null;
+    room.timer           = null;
+    room.pauseTimer      = null;
+    room.submissionTimer = null;
     rooms[code] = room;
     if (room.turnActive && room.timerEnd) {
       const remaining = room.timerEnd - Date.now();
@@ -105,6 +106,14 @@ async function getRoom(code) {
         room.timer = setTimeout(() => handleTurnExpiry(code), remaining);
       } else {
         setImmediate(() => handleTurnExpiry(code));
+      }
+    }
+    if (room.phase === 'submitting' && room.submissionDeadline) {
+      const remaining = room.submissionDeadline - Date.now();
+      if (remaining > 0) {
+        room.submissionTimer = setTimeout(() => autoCloseSubmissions(code), remaining);
+      } else {
+        setImmediate(() => autoCloseSubmissions(code));
       }
     }
     return room;
@@ -123,8 +132,9 @@ async function saveRoom(room) {
 async function deleteRoom(code) {
   const room = rooms[code];
   if (room) {
-    if (room.timer)      clearTimeout(room.timer);
-    if (room.pauseTimer) clearTimeout(room.pauseTimer);
+    if (room.timer)           clearTimeout(room.timer);
+    if (room.pauseTimer)      clearTimeout(room.pauseTimer);
+    if (room.submissionTimer) clearTimeout(room.submissionTimer);
     delete rooms[code];
   }
   if (redis) try { await redis.del(`room:${code}`); } catch { /* ignore */ }
@@ -183,12 +193,11 @@ function publicState(room) {
       '1': t1.filter(p => p.submitted).length,
     },
     // Feature 1: use stored team names instead of computed from player names
-    teamNames:       room.teamNames ?? ['Team 1', 'Team 2'],
-    celebsPerPlayer: room.celebsPerPlayer ?? 3,
-    // Feature 2: variable turn duration
-    turnDuration:    room.turnDuration ?? 60,
-    // Feature 3: game history
-    history:         room.history ?? {},
+    teamNames:          room.teamNames ?? ['Team 1', 'Team 2'],
+    celebsPerPlayer:    room.celebsPerPlayer ?? 3,
+    turnDuration:       room.turnDuration ?? 60,
+    history:            room.history ?? {},
+    submissionDeadline: room.submissionDeadline ?? null,
   };
 }
 
@@ -213,9 +222,47 @@ function isRateLimited(ip) {
 //  GAME LOGIC
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+// ── autoCloseSubmissions ──────────────────────────────────────────────────
+// Fires when the submission-phase countdown expires. If at least one slip was
+// submitted the game starts immediately with whoever finished; unsubmitted
+// players simply contribute no names this game.
+const SUBMISSION_DURATION_SECS = 120; // 2 minutes
+
+async function autoCloseSubmissions(roomCode) {
+  const room = await getRoom(roomCode);
+  if (!room || room.phase !== 'submitting') return;
+
+  room.submissionTimer   = null;
+  room.submissionDeadline = null;
+
+  if (!room.allSlips.length) {
+    // Nobody submitted — notify and wait; host must start manually
+    io.to(room.code).emit('error_msg', {
+      msg: 'Submission time is up! Submit at least one celebrity to continue.',
+    });
+    await saveRoom(room);
+    return;
+  }
+
+  // Force-start the game with current submissions
+  room.phase            = 'playing';
+  room.round            = 1;
+  room.pile             = shuffle([...room.allSlips]);
+  room.currentTeamIdx   = 0;
+  room.playerTurnIdx    = [0, 0];
+  room.lastActivity     = Date.now();
+  await saveRoom(room);
+  io.to(room.code).emit('round_starting', {
+    round: 1, totalSlips: room.pile.length,
+    autoStarted: true,           // client shows a toast about this
+    gameState: publicState(room),
+  });
+}
+
 async function finalizeTurn(room) {
   // Feature 3: record history BEFORE mutating turn state
-  const cp        = currentPlayer(room);
+  const cp           = currentPlayer(room);
+  const scorerName   = cp?.name ?? 'Unknown';
   const slipsGotten  = [...room.teamSlipsThisTurn];
   const skippedCount = room.skipsThisTurn ?? 0;
   const teamIdx      = room.currentTeamIdx;
@@ -268,6 +315,7 @@ async function finalizeTurn(room) {
     io.to(room.code).emit('turn_ended', {
       slipsGotten, teamIdx, scores: room.scores,
       got: slipsGotten.length, skipped: skippedCount,
+      scorerName,
       pileCount: room.pile.length,
       gameState: publicState(room),
     });
@@ -467,7 +515,12 @@ io.on('connection', (socket) => {
     if (!teamPlayers(room, 0).length || !teamPlayers(room, 1).length) {
       return socket.emit('error_msg', { msg: 'Both teams need at least one player.' });
     }
-    room.phase = 'submitting';
+    room.phase             = 'submitting';
+    room.submissionDeadline = Date.now() + SUBMISSION_DURATION_SECS * 1000;
+    room.submissionTimer    = setTimeout(
+      () => autoCloseSubmissions(room.code),
+      SUBMISSION_DURATION_SECS * 1000,
+    );
     room.lastActivity = Date.now();
     await saveRoom(room);
     io.to(room.code).emit('phase_changed', { phase: 'submitting', gameState: publicState(room) });
@@ -499,6 +552,9 @@ io.on('connection', (socket) => {
     io.to(room.code).emit('state_update', { gameState: publicState(room) });
 
     if (allDone) {
+      // Cancel the auto-close countdown — everyone finished early
+      if (room.submissionTimer) { clearTimeout(room.submissionTimer); room.submissionTimer = null; }
+      room.submissionDeadline = null;
       room.phase          = 'playing';
       room.round          = 1;
       room.pile           = shuffle([...room.allSlips]);
@@ -540,10 +596,12 @@ io.on('connection', (socket) => {
     const room = await getRoom(socket.data.roomCode);
     if (!room || room.host !== socket.id || room.phase !== 'finished') return;
 
-    if (room.timer)      { clearTimeout(room.timer);      room.timer      = null; }
-    if (room.pauseTimer) { clearTimeout(room.pauseTimer); room.pauseTimer = null; }
+    if (room.timer)           { clearTimeout(room.timer);           room.timer           = null; }
+    if (room.pauseTimer)      { clearTimeout(room.pauseTimer);      room.pauseTimer      = null; }
+    if (room.submissionTimer) { clearTimeout(room.submissionTimer); room.submissionTimer = null; }
 
     room.phase             = 'lobby';
+    room.submissionDeadline = null;
     room.round             = 0;
     room.allSlips          = [];
     room.pile              = [];
@@ -675,6 +733,39 @@ io.on('connection', (socket) => {
     room.lastActivity = Date.now();
     await saveRoom(room);
     io.to(room.code).emit('host_changed', { newHostId: targetId, newHostName: target.name });
+    io.to(room.code).emit('state_update', { gameState: publicState(room) });
+  });
+
+  // ── kick_player ────────────────────────────────────────────────────
+  // Host-only. Works in lobby and playing phases.
+  socket.on('kick_player', async (data) => {
+    const room = await getRoom(socket.data.roomCode);
+    if (!room || room.host !== socket.id) return;
+
+    const targetId = data?.targetPlayerId;
+    if (!targetId || targetId === socket.id) return; // can't kick self
+
+    const target = room.players.find(p => p.id === targetId);
+    if (!target) return;
+
+    // Remove them from the room entirely
+    room.players = room.players.filter(p => p.id !== targetId);
+
+    // If they had submitted, remove their slips
+    if (target.slips?.length && room.phase === 'submitting') {
+      for (const slip of target.slips) {
+        const idx = room.allSlips.indexOf(slip);
+        if (idx !== -1) room.allSlips.splice(idx, 1);
+      }
+    }
+
+    room.lastActivity = Date.now();
+    await saveRoom(room);
+
+    // Notify the kicked socket first
+    io.to(targetId).emit('kicked', { msg: 'You were removed from the room by the host.' });
+    // Update everyone else
+    io.to(room.code).emit('player_left',  { gameState: publicState(room) });
     io.to(room.code).emit('state_update', { gameState: publicState(room) });
   });
 

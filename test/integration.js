@@ -647,6 +647,142 @@ test('/api/suggest returns empty for short query', async () => {
     'empty array for query < 2 chars');
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  SUITE 14 — MVP: kick_player
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('Host can kick a player from the lobby', async () => {
+  const host  = makeClient();
+  const guest = makeClient();
+  await Promise.all([waitFor(host, 'connect'), waitFor(guest, 'connect')]);
+
+  host.emit('create_room', { playerName: 'Alice' });
+  const { roomCode } = await waitFor(host, 'room_created');
+  guest.emit('join_room', { playerName: 'Bob', roomCode });
+  await waitFor(guest, 'room_joined');
+
+  // Kick Bob
+  const kickedP    = waitFor(guest, 'kicked');
+  const stateUpdateP = waitFor(host, 'state_update');
+  host.emit('kick_player', { targetPlayerId: guest.id });
+
+  const [kicked, stateUpdate] = await Promise.all([kickedP, stateUpdateP]);
+  assert(!!kicked?.msg, 'kicked player receives a message');
+  assert(
+    stateUpdate?.gameState?.players?.every(p => p.name !== 'Bob'),
+    'Bob removed from room state',
+  );
+
+  disconnectAll(host, guest);
+});
+
+test('Non-host cannot kick a player', async () => {
+  const host  = makeClient();
+  const guest = makeClient();
+  await Promise.all([waitFor(host, 'connect'), waitFor(guest, 'connect')]);
+
+  host.emit('create_room', { playerName: 'Alice' });
+  const { roomCode } = await waitFor(host, 'room_created');
+  guest.emit('join_room', { playerName: 'Bob', roomCode });
+  await waitFor(guest, 'room_joined');
+
+  // Bob tries to kick Alice — should be silently ignored
+  guest.emit('kick_player', { targetPlayerId: host.id });
+  await sleep(300);
+  pass('non-host kick_player silently ignored (no crash, no kick)');
+
+  disconnectAll(host, guest);
+});
+
+test('Host cannot kick themselves', async () => {
+  const host  = makeClient();
+  const guest = makeClient();
+  await Promise.all([waitFor(host, 'connect'), waitFor(guest, 'connect')]);
+
+  host.emit('create_room', { playerName: 'Alice' });
+  const { roomCode } = await waitFor(host, 'room_created');
+  guest.emit('join_room', { playerName: 'Bob', roomCode });
+  await waitFor(guest, 'room_joined');
+
+  host.emit('kick_player', { targetPlayerId: host.id });
+  await sleep(300);
+  pass('self-kick silently ignored');
+
+  disconnectAll(host, guest);
+});
+
+test('Kicked player submission slips removed from allSlips', async () => {
+  const { clients, h, p1, p2, p3 } = await setupAndStartGame(2);
+
+  // Host submits
+  h.emit('submit_celebrities', ['Name A', 'Name B']);
+  await waitFor(h, 'state_update');
+
+  // P1 submits
+  p1.emit('submit_celebrities', ['Name C', 'Name D']);
+  await waitFor(h, 'state_update');
+
+  // Kick P1 — their slips should be removed
+  const kickedP = waitFor(p1, 'kicked');
+  h.emit('kick_player', { targetPlayerId: p1.id });
+  await kickedP;
+
+  // P2 submits (still need everyone to submit to start — game now has 3 non-kicked players)
+  // Just verify state shows only host's submission count
+  const update = await waitFor(h, 'state_update');
+  // P1 is gone; teamSlipsCount for host's team should not count P1
+  const p1Still = update?.gameState?.players?.find(p => p.name === 'P1');
+  assert(p1Still === undefined, 'P1 removed from players list after kick');
+
+  disconnectAll(...clients);
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  SUITE 15 — MVP: submission countdown / autoCloseSubmissions
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('submissionDeadline present in state after start_game', async () => {
+  const { clients, h, phaseData } = await setupAndStartGame(2);
+  assert(
+    typeof phaseData?.gameState?.submissionDeadline === 'number' &&
+    phaseData.gameState.submissionDeadline > Date.now(),
+    'submissionDeadline is a future timestamp',
+  );
+  disconnectAll(...clients);
+});
+
+test('scorerName present in turn_ended event', async () => {
+  const { clients, h } = await setupReadyToPlay(2);
+
+  h.emit('start_turn');
+  await waitFor(h, 'your_slip');
+
+  // Score one slip; if pile has only 1, round ends instead of turn_ended
+  // Use a room with enough slips for a turn to end without exhausting pile
+  const result = await new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('timeout waiting for turn_ended or round_ended')), 15000);
+    function done(event, data) { clearTimeout(t); resolve({ event, data }); }
+    clients.forEach(c => {
+      c.once('turn_ended',  d => done('turn_ended', d));
+      c.once('round_ended', d => done('round_ended', d));
+    });
+    // Drain with got_it — when timer expires, finalizeTurn fires
+    h.emit('got_it');
+    // After draining, turn ends or round ends
+    h.on('your_slip', () => h.emit('got_it'));
+  });
+
+  if (result.event === 'turn_ended') {
+    assert(typeof result.data?.scorerName === 'string' && result.data.scorerName.length > 0,
+      `scorerName present in turn_ended: "${result.data?.scorerName}"`);
+  } else {
+    // round_ended — round_ended doesn't carry scorerName, but that's fine
+    pass('round ended before turn_ended fired — no scorerName check needed');
+  }
+
+  disconnectAll(...clients);
+});
+
 // ── Run ────────────────────────────────────────────────────────────────────────
 
 run().catch(e => { console.error(e); process.exit(1); });

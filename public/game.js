@@ -7,11 +7,13 @@ const APP_VERSION = '1.0.0';
 const socket = io();
 
 // ── Local state ──────────────────────────────────────────────────────
-let myId          = null;
-let myName        = null;
-let gameState     = null;   // latest publicState from server
-let currentSlip   = null;   // only set for the active clue-giver
-let timerInterval = null;
+let myId                  = null;
+let myName                = null;
+let gameState             = null;   // latest publicState from server
+let currentSlip           = null;   // only set for the active clue-giver
+let timerInterval         = null;
+let subCountdownInterval  = null;   // submission-phase countdown
+let liveTurnScore         = 0;      // running tally during active turn
 
 // ── Connection state ─────────────────────────────────────────────────
 let connectTimeoutId = null;
@@ -122,6 +124,30 @@ function startClientTimer(timerEnd) {
 
 function stopTimer() {
   if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+}
+
+// ── Submission countdown ─────────────────────────────────────────────
+function startSubCountdown(deadline) {
+  stopSubCountdown();
+  const el   = document.getElementById('submission-countdown');
+  const secs = document.getElementById('submission-secs');
+  if (!el || !secs) return;
+  el.classList.remove('hidden');
+
+  function tick() {
+    const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+    secs.textContent = left;
+    el.classList.toggle('urgent', left <= 30);
+    if (left === 0) stopSubCountdown();
+  }
+  tick();
+  subCountdownInterval = setInterval(tick, 500);
+}
+
+function stopSubCountdown() {
+  if (subCountdownInterval) { clearInterval(subCountdownInterval); subCountdownInterval = null; }
+  const el = document.getElementById('submission-countdown');
+  if (el) el.classList.add('hidden');
 }
 
 function updateTimerDisplay(timerEnd) {
@@ -239,6 +265,20 @@ function renderLobby() {
           }
         });
         btnGroup.appendChild(mkHost);
+
+        // Kick button (non-self, non-host players only)
+        if (p.id !== myId) {
+          const kick = document.createElement('button');
+          kick.className = 'btn-kick';
+          kick.title = `Remove ${p.name}`;
+          kick.textContent = '🚫';
+          kick.addEventListener('click', () => {
+            if (confirm(`Remove ${p.name} from the room?`)) {
+              socket.emit('kick_player', { targetPlayerId: p.id });
+            }
+          });
+          btnGroup.appendChild(kick);
+        }
       }
 
       row.appendChild(btnGroup);
@@ -355,6 +395,13 @@ function renderSubmitting() {
   const me = myPlayer();
   if (!me) return;
   const n = gameState?.celebsPerPlayer ?? 3;
+
+  // Start / refresh the submission countdown if server sent a deadline
+  if (gameState?.submissionDeadline) {
+    startSubCountdown(gameState.submissionDeadline);
+  } else {
+    stopSubCountdown();
+  }
 
   if (me.submitted) {
     document.getElementById('submit-form-wrap').classList.add('hidden');
@@ -637,11 +684,15 @@ function showRoundIntroOverlay(round, prevScores) {
 }
 
 function showTurnRecapOverlay(data) {
-  const { slipsGotten, teamIdx, scores } = data;
+  const { slipsGotten, teamIdx, scores, scorerName } = data;
   const tCls = `team-${teamIdx}`;
 
   document.getElementById('tr-team-label').className = `tr-team-label ${tCls}`;
   document.getElementById('tr-team-label').textContent = teamLabel(teamIdx);
+
+  const scorerEl = document.getElementById('tr-scorer-name');
+  if (scorerEl) scorerEl.textContent = scorerName ? `${scorerName} was describing` : '';
+
   document.getElementById('tr-count').textContent =
     `Got ${slipsGotten.length} slip${slipsGotten.length !== 1 ? 's' : ''}`;
 
@@ -932,7 +983,9 @@ socket.on('phase_changed', ({ phase, gameState: gs }) => {
   }
 });
 
-socket.on('round_starting', ({ round, gameState: gs }) => {
+socket.on('round_starting', ({ round, autoStarted, gameState: gs }) => {
+  stopSubCountdown();
+  if (autoStarted) showToast('⏰ Time\'s up — starting with submitted celebrities!');
   gameState = gs;
   showScreen('screen-game');
   updateGameHeader();
@@ -961,6 +1014,15 @@ socket.on('slip_correct', ({ count, pileCount }) => {
   if (el) el.textContent = count;
   const pile = document.getElementById('pile-display');
   if (pile) pile.textContent = `${pileCount} slip${pileCount !== 1 ? 's' : ''} left`;
+
+  // Live score: update the active team's score header without waiting for turn_ended
+  liveTurnScore = count;
+  if (gameState) {
+    const tIdx   = gameState.currentTeamIdx;
+    const base   = totalScore(gameState.scores, tIdx);
+    const scoreEl = document.getElementById(`score-${tIdx}`);
+    if (scoreEl) scoreEl.textContent = base + liveTurnScore;
+  }
 });
 
 socket.on('slip_skipped', ({ pileCount }) => {
@@ -968,13 +1030,14 @@ socket.on('slip_skipped', ({ pileCount }) => {
   if (pile) pile.textContent = `${pileCount} slip${pileCount !== 1 ? 's' : ''} left`;
 });
 
-socket.on('turn_ended', ({ slipsGotten, teamIdx, scores, gameState: gs }) => {
+socket.on('turn_ended', ({ slipsGotten, teamIdx, scores, scorerName, gameState: gs }) => {
   stopTimer();
+  liveTurnScore = 0;
   currentSlip = null;
   gameState = gs;
   updateGameHeader();
   renderGameMain();
-  showTurnRecapOverlay({ slipsGotten, teamIdx, scores });
+  showTurnRecapOverlay({ slipsGotten, teamIdx, scores, scorerName });
 });
 
 socket.on('round_ended', ({ round, scores, lastTurnSlips, lastTeamIdx, gameState: gs }) => {
@@ -1110,4 +1173,14 @@ socket.on('room_reset', ({ gameState: gs }) => {
     renderLobby();
     showScreen('screen-lobby');
   }
+});
+
+socket.on('kicked', ({ msg }) => {
+  stopTimer();
+  stopSubCountdown();
+  gameState   = null;
+  currentSlip = null;
+  myId        = null;
+  showToast(msg ?? 'You were removed from the room.');
+  showScreen('screen-home');
 });
