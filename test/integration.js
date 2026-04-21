@@ -205,7 +205,12 @@ test('Host sets turn duration', async () => {
 //  SUITE 4 — Game Start & Celebrity Submission
 // ══════════════════════════════════════════════════════════════════════════════
 
-async function setupAndStartGame(celebsPerPlayer = 2) {
+/**
+ * setupAndStartGame(celebsPerPlayer, opts)
+ *   opts.turnDuration       – seconds (any value in TEST_MODE, default 60)
+ *   opts.submissionDuration – seconds (as low as 1 in TEST_MODE, default 120)
+ */
+async function setupAndStartGame(celebsPerPlayer = 2, opts = {}) {
   const clients = [makeClient(), makeClient(), makeClient(), makeClient()];
   const [h, p1, p2, p3] = clients;
   await Promise.all(clients.map(c => waitFor(c, 'connect')));
@@ -215,6 +220,16 @@ async function setupAndStartGame(celebsPerPlayer = 2) {
 
   h.emit('set_celebs_per_player', { count: celebsPerPlayer });
   await waitFor(h, 'state_update');
+
+  if (opts.turnDuration !== undefined) {
+    h.emit('set_turn_duration', { seconds: opts.turnDuration });
+    await waitFor(h, 'state_update');
+  }
+
+  if (opts.submissionDuration !== undefined) {
+    h.emit('set_submission_duration', { seconds: opts.submissionDuration });
+    await waitFor(h, 'state_update');
+  }
 
   p1.emit('join_room', { playerName: 'P1', roomCode });
   await waitFor(p1, 'room_joined');
@@ -318,8 +333,8 @@ test('Cannot retract after game has started', async () => {
 //  SUITE 6 — Turn Flow
 // ══════════════════════════════════════════════════════════════════════════════
 
-async function setupReadyToPlay(celebsPerPlayer = 2) {
-  const setup = await setupAndStartGame(celebsPerPlayer);
+async function setupReadyToPlay(celebsPerPlayer = 2, opts = {}) {
+  const setup = await setupAndStartGame(celebsPerPlayer, opts);
   const { h, p1, p2, p3 } = setup;
 
   const genNames = (prefix, count) =>
@@ -779,6 +794,310 @@ test('scorerName present in turn_ended event', async () => {
     // round_ended — round_ended doesn't carry scorerName, but that's fine
     pass('round ended before turn_ended fired — no scorerName check needed');
   }
+
+  disconnectAll(...clients);
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  SUITE 16 — Submission countdown: auto-close behaviour
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('submissionDeadline is null in round_starting when all players submit naturally', async () => {
+  const { clients, h, p1, p2, p3 } = await setupAndStartGame(1);
+
+  const genNames = (prefix) => [prefix];
+  h.emit('submit_celebrities',  genNames('Host Name'));
+  p1.emit('submit_celebrities', genNames('P1 Name'));
+  p2.emit('submit_celebrities', genNames('P2 Name'));
+  p3.emit('submit_celebrities', genNames('P3 Name'));
+
+  const intro = await waitFor(h, 'round_starting', 8000);
+  assert(intro?.gameState?.submissionDeadline === null,
+    'submissionDeadline cleared after all players submit early');
+
+  disconnectAll(...clients);
+});
+
+test('auto-close fires with partial submissions when deadline expires', async () => {
+  // 2-second submission window — only 2 of 4 players submit
+  const { clients, h, p1, p2, p3 } = await setupAndStartGame(1, { submissionDuration: 2 });
+
+  h.emit('submit_celebrities',  ['Host Name']);
+  p1.emit('submit_celebrities', ['P1 Name']);
+  // P2 and P3 do NOT submit
+
+  // After ~2s the server should auto-start with partial submissions
+  const intro = await waitFor(h, 'round_starting', 10000);
+  assert(intro?.round === 1, 'round 1 starts despite partial submissions');
+  assert(intro?.autoStarted === true, 'autoStarted flag is true');
+  assert((intro?.totalSlips ?? 0) >= 1, `pile has ${intro?.totalSlips} slips from partial submissions`);
+
+  disconnectAll(...clients);
+});
+
+test('no auto-start when nobody submits — error_msg emitted instead', async () => {
+  // 2-second submission window — nobody submits
+  const { clients, h } = await setupAndStartGame(1, { submissionDuration: 2 });
+
+  // Nobody submits — wait for the error message
+  const err = await waitFor(h, 'error_msg', 10000);
+  assert(!!err?.msg, `server emits error when nobody submits (msg: "${err?.msg}")`);
+
+  disconnectAll(...clients);
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  SUITE 17 — kick_player: edge cases
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('kick_player with bogus ID is silently ignored', async () => {
+  const host = makeClient();
+  await waitFor(host, 'connect');
+  host.emit('create_room', { playerName: 'Alice' });
+  await waitFor(host, 'room_created');
+
+  host.emit('kick_player', { targetPlayerId: 'totally-nonexistent-socket-id' });
+  await sleep(300);
+  pass('kick with bogus player ID does not crash server');
+
+  disconnectAll(host);
+});
+
+test('Host can kick a spectator during playing phase', async () => {
+  const { clients, h, roomCode } = await setupReadyToPlay(1);
+
+  const spec = makeClient();
+  await waitFor(spec, 'connect');
+  spec.emit('join_room', { playerName: 'Watcher', roomCode });
+  const joinData = await waitFor(spec, 'room_joined');
+  const specPlayer = joinData?.gameState?.players?.find(p => p.name === 'Watcher');
+  assert(specPlayer?.role === 'spectator', 'late joiner is spectator during playing phase');
+
+  const kickedP      = waitFor(spec, 'kicked');
+  const stateUpdateP = waitFor(h, 'state_update');
+  h.emit('kick_player', { targetPlayerId: spec.id });
+
+  const [kicked, update] = await Promise.all([kickedP, stateUpdateP]);
+  assert(!!kicked?.msg, 'spectator receives kicked message');
+  assert(
+    update?.gameState?.players?.every(p => p.name !== 'Watcher'),
+    'spectator removed from player list',
+  );
+
+  disconnectAll(...clients, spec);
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  SUITE 18 — scorerName accuracy
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('scorerName in turn_ended matches the player who started the turn', async () => {
+  // Short turn (4 s) so the test doesn't run for 60 s waiting for timer expiry
+  const { clients, h } = await setupReadyToPlay(2, { turnDuration: 4 });
+
+  h.emit('start_turn');
+  await waitFor(h, 'your_slip');
+
+  // Score one slip, then let the timer expire — that guarantees turn_ended fires
+  // (unless pile is so small round_ended fires first).
+  const result = await new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('timeout waiting for turn event')), 15000);
+    const done = (event, data) => { clearTimeout(t); resolve({ event, data }); };
+    clients.forEach(c => {
+      c.once('turn_ended',  d => done('turn_ended', d));
+      c.once('round_ended', d => done('round_ended', d));
+    });
+    // Score first slip; additional slips scored automatically
+    h.emit('got_it');
+    h.on('your_slip', () => h.emit('got_it'));
+  });
+
+  if (result.event === 'turn_ended') {
+    assert(
+      result.data?.scorerName === 'Host',
+      `scorerName is "Host" (got "${result.data?.scorerName}")`,
+    );
+  } else {
+    // round_ended doesn't carry scorerName — that's expected
+    pass('round ended before timer — scorerName only attached to turn_ended; skipped');
+  }
+
+  disconnectAll(...clients);
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  SUITE 19 — Regression guard rails
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('start_game rejected when only one team has players', async () => {
+  const host  = makeClient();
+  const guest = makeClient();
+  await Promise.all([waitFor(host, 'connect'), waitFor(guest, 'connect')]);
+
+  host.emit('create_room', { playerName: 'Alice' });
+  const { roomCode } = await waitFor(host, 'room_created');
+  guest.emit('join_room', { playerName: 'Bob', roomCode });
+  await waitFor(guest, 'room_joined');
+
+  // Both players assigned to team 0 — team 1 is empty
+  host.emit('set_teams', [[host.id, guest.id], []]);
+  await waitFor(host, 'state_update');
+
+  host.emit('start_game');
+  const err = await waitFor(host, 'error_msg');
+  assert(!!err?.msg, `error emitted when team 1 is empty (msg: "${err?.msg}")`);
+
+  disconnectAll(host, guest);
+});
+
+test('Spectator joining during submitting phase cannot submit celebrities', async () => {
+  const { clients, h, roomCode } = await setupAndStartGame(1);
+
+  // Spectator joins after game started (submitting phase)
+  const spec = makeClient();
+  await waitFor(spec, 'connect');
+  spec.emit('join_room', { playerName: 'Watcher', roomCode });
+  const joinData = await waitFor(spec, 'room_joined');
+  const specInState = joinData?.gameState?.players?.find(p => p.name === 'Watcher');
+  assert(specInState?.role === 'spectator', 'joined during submitting → spectator');
+
+  // Spectator tries to submit — should be silently ignored
+  spec.emit('submit_celebrities', ['Famous Person']);
+  await sleep(300);
+  pass('spectator submit silently ignored — no error thrown, no crash');
+
+  disconnectAll(...clients, spec);
+});
+
+test('Scores accumulate correctly: total slips scored equals pile size', async () => {
+  // 1 celeb per player = 4 slips in pile; play through round 1 and verify totals
+  const { clients, h, p1, p2, p3 } = await setupReadyToPlay(1);
+  const idMap = Object.fromEntries([h, p1, p2, p3].map(c => [c.id, c]));
+
+  const result = await playRound(idMap, clients, h.id);
+
+  if (result.event === 'round_ended') {
+    const scores = result.data?.scores ?? {};
+    const round1Total =
+      (scores?.['0']?.[1] ?? 0) + (scores?.['1']?.[1] ?? 0);
+    assert(round1Total === 4,
+      `all 4 slips accounted for in round 1 scores (got ${round1Total})`);
+  } else if (result.event === 'game_ended') {
+    // Entire game finished in one round — unlikely with 4 slips / 3 rounds but handle it
+    pass('game ended while verifying scores — structure verified');
+  }
+
+  disconnectAll(...clients);
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  SUITE 20 — Turn timer server expiry
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('Turn timer expiry triggers turn_ended with got=0 and returns slip to pile', async () => {
+  // 3-second turn so the test completes quickly
+  const { clients, h } = await setupReadyToPlay(1, { turnDuration: 3 });
+
+  h.emit('start_turn');
+  await waitFor(h, 'your_slip');
+
+  // Do NOT emit got_it — let the server timer fire
+  const result = await new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('timeout waiting for turn event after expiry')), 12000);
+    const done = (event, data) => { clearTimeout(t); resolve({ event, data }); };
+    clients.forEach(c => {
+      c.once('turn_ended',  d => done('turn_ended', d));
+      c.once('round_ended', d => done('round_ended', d));
+    });
+  });
+
+  assert(
+    ['turn_ended', 'round_ended'].includes(result.event),
+    `server fires ${result.event} after timer expiry`,
+  );
+
+  if (result.event === 'turn_ended') {
+    assert(result.data?.got === 0, 'got=0 (no slips scored before expiry)');
+    // The current slip was returned to the pile — pileCount should be ≥ 1
+    assert((result.data?.pileCount ?? 0) >= 1,
+      `pile has ${result.data?.pileCount} slip(s) after timer expiry`);
+  } else {
+    pass('round_ended fired (pile exhausted by timer edge case — valid)');
+  }
+
+  disconnectAll(...clients);
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  SUITE 21 — Full 3-round game → game_ended
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * playRound(idMap, clients, startPlayerId)
+ * Plays turns (scoring all slips each turn) until round_ended or game_ended.
+ * Returns { event, data }.
+ */
+async function playRound(idMap, clients, startPlayerId) {
+  let currentPlayerId = startPlayerId;
+  while (true) {
+    const starter = idMap[currentPlayerId];
+    if (!starter) throw new Error(`playRound: unknown player id ${currentPlayerId}`);
+
+    starter.emit('start_turn');
+    await waitFor(starter, 'your_slip', 8000);
+
+    const result = await drainPile(starter, clients);
+    if (result.event !== 'turn_ended') return result; // round_ended or game_ended
+
+    currentPlayerId = result.data?.gameState?.currentPlayerId;
+    if (!currentPlayerId) throw new Error('playRound: no currentPlayerId after turn_ended');
+    await sleep(150);
+  }
+}
+
+test('Full 3-round game fires game_ended with valid scores and winner', async () => {
+  // 1 celeb per player = 4 slips per round; scoring is fast since we drain greedily
+  const { clients, h, p1, p2, p3 } = await setupReadyToPlay(1);
+  const idMap = Object.fromEntries([h, p1, p2, p3].map(c => [c.id, c]));
+
+  // ── Round 1 ──────────────────────────────────────────────────────────
+  let result = await playRound(idMap, clients, h.id);
+  assert(result.event === 'round_ended', `round 1: expected round_ended (got ${result.event})`);
+  assert(result.data?.round === 1, 'round 1 confirmed');
+
+  // ── Round 2 ──────────────────────────────────────────────────────────
+  h.emit('start_next_round');
+  const r2 = await waitFor(h, 'round_starting', 5000);
+  assert(r2?.round === 2, 'round 2 starts');
+
+  const r2StartId = r2?.gameState?.currentPlayerId ?? p2.id;
+  result = await playRound(idMap, clients, r2StartId);
+  assert(result.event === 'round_ended', `round 2: expected round_ended (got ${result.event})`);
+  assert(result.data?.round === 2, 'round 2 confirmed');
+
+  // ── Round 3 ──────────────────────────────────────────────────────────
+  h.emit('start_next_round');
+  const r3 = await waitFor(h, 'round_starting', 5000);
+  assert(r3?.round === 3, 'round 3 starts');
+
+  const r3StartId = r3?.gameState?.currentPlayerId ?? h.id;
+  result = await playRound(idMap, clients, r3StartId);
+  assert(result.event === 'game_ended', `game_ended fires after round 3 (got ${result.event})`);
+
+  // ── Validate game_ended payload ───────────────────────────────────────
+  const { scores, winner } = result.data ?? {};
+  assert(typeof scores === 'object', 'game_ended includes scores object');
+  assert([0, 1, null].includes(winner ?? null), `winner is 0, 1, or null (got ${winner})`);
+  assert(result.data?.gameState?.phase === 'finished', 'phase transitions to finished');
+
+  // Total slips scored across all 3 rounds = 4 slips × 3 rounds = 12
+  const s0 = Object.values(scores?.['0'] ?? {}).reduce((a, b) => a + b, 0);
+  const s1 = Object.values(scores?.['1'] ?? {}).reduce((a, b) => a + b, 0);
+  assert(s0 + s1 === 12, `total slips scored = 12 (got ${s0 + s1})`);
+
+  // Winner matches the higher-scoring team
+  const expectedWinner = s0 > s1 ? 0 : s1 > s0 ? 1 : null;
+  assert(winner === expectedWinner, `winner (${winner}) matches highest scorer (${expectedWinner})`);
 
   disconnectAll(...clients);
 });
