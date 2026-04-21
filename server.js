@@ -501,8 +501,29 @@ io.on('connection', (socket) => {
     const room = await getRoom(socket.data.roomCode);
     if (!room || room.host !== socket.id || room.phase !== 'lobby') return;
     const secs = typeof data === 'number' ? data : (data?.seconds ?? 60);
-    if (![30, 60, 90].includes(secs)) return;
+    // In TEST_MODE accept any value 1–300s so integration tests can use short durations
+    if (process.env.TEST_MODE) {
+      if (secs < 1 || secs > 300) return;
+    } else {
+      if (![30, 60, 90].includes(secs)) return;
+    }
     room.turnDuration = secs;
+    room.lastActivity = Date.now();
+    await saveRoom(room);
+    io.to(room.code).emit('state_update', { gameState: publicState(room) });
+  });
+
+  // ── set_submission_duration ────────────────────────────────────────
+  // Host can set how long players have to submit celebrities before the
+  // auto-close timer fires. In TEST_MODE values as low as 1 s are accepted;
+  // in production minimum is 30 s so the lobby isn't accidentally rushed.
+  socket.on('set_submission_duration', async (data) => {
+    const room = await getRoom(socket.data.roomCode);
+    if (!room || room.host !== socket.id || room.phase !== 'lobby') return;
+    const secs = typeof data === 'number' ? data : (data?.seconds ?? 120);
+    const min = process.env.TEST_MODE ? 1 : 30;
+    if (secs < min || secs > 600) return;
+    room.submissionDuration = secs;
     room.lastActivity = Date.now();
     await saveRoom(room);
     io.to(room.code).emit('state_update', { gameState: publicState(room) });
@@ -515,11 +536,12 @@ io.on('connection', (socket) => {
     if (!teamPlayers(room, 0).length || !teamPlayers(room, 1).length) {
       return socket.emit('error_msg', { msg: 'Both teams need at least one player.' });
     }
+    const subDurSecs = room.submissionDuration ?? SUBMISSION_DURATION_SECS;
     room.phase             = 'submitting';
-    room.submissionDeadline = Date.now() + SUBMISSION_DURATION_SECS * 1000;
+    room.submissionDeadline = Date.now() + subDurSecs * 1000;
     room.submissionTimer    = setTimeout(
       () => autoCloseSubmissions(room.code),
-      SUBMISSION_DURATION_SECS * 1000,
+      subDurSecs * 1000,
     );
     room.lastActivity = Date.now();
     await saveRoom(room);

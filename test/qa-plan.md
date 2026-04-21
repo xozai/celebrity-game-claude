@@ -183,6 +183,49 @@ Complete on both **Chrome (web)** and **iOS Simulator** unless marked otherwise.
 
 ---
 
+---
+
+### 12. MVP Feature — Submission Countdown
+
+| # | Step | Expected |
+|---|------|----------|
+| 12.1 | Start game in lobby | Submission screen shows timer banner: "⏱ Time to submit: 120s" |
+| 12.2 | Timer reaches 30s | Banner turns red and pulses (`.urgent` CSS class) |
+| 12.3 | All players submit before deadline | Timer disappears; round 1 intro fires immediately |
+| 12.4 | Deadline expires with ≥1 submission | Game auto-starts; toast shows "⏰ Time's up — game started with submitted celebrities!" |
+| 12.5 | Deadline expires with 0 submissions | Error banner: "Submission time is up! Submit at least one celebrity to continue." Game stays in submitting phase |
+| 12.6 | iOS: deadline reflected in iOS timer | iOS submission screen shows correct countdown synced with server's `submissionDeadline` |
+| 12.7 | Player joins room after deadline fires | Joins as spectator; game is already in playing phase |
+
+---
+
+### 13. MVP Feature — Kick Player
+
+| # | Step | Expected |
+|---|------|----------|
+| 13.1 | Host long-presses a player in lobby → "Remove from Room" | Player receives "kicked" modal; removed from room |
+| 13.2 | Host swipes left on a player row (iOS) → "Remove" | Same as 13.1 |
+| 13.3 | Kicked player taps "OK" | Returns to home screen; stored room code cleared |
+| 13.4 | Host kicks player who had submitted | Player's celebrity slips removed from allSlips; count decrements |
+| 13.5 | Host tries to kick themselves | Silently ignored — no crash, no kick |
+| 13.6 | Non-host tries to kick another player | Silently ignored — no message, no state change |
+| 13.7 | Host kicks spectator during gameplay | Spectator removed; remaining players unaffected |
+| 13.8 | Kick a player who disconnected first | No crash; player removed from list if still in room object |
+
+---
+
+### 14. MVP Feature — Live Turn Score & Scorer Recap
+
+| # | Step | Expected |
+|---|------|----------|
+| 14.1 | During an active turn, each "Got it!" increments the team score in the header | Score header updates in real time without waiting for turn end |
+| 14.2 | Turn recap overlay shows scorer name | "Scored by Alice" appears in recap (not just team name) |
+| 14.3 | `scorerName` matches player who started the turn | If Alice started the turn and scored 3, recap says "Alice" |
+| 14.4 | iOS turn recap shows scorer name | Same display on iOS client |
+| 14.5 | Live score resets to 0 at start of next turn | Header shows previous persisted score, not leftover from prior turn |
+
+---
+
 ## Known Limitations (not bugs)
 
 - Server cold-start on Render free tier takes ~30s — expected behaviour
